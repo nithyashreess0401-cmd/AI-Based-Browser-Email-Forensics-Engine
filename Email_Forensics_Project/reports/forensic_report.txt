@@ -1,0 +1,17 @@
+========== EMAIL FORENSIC REPORT ==========
+
+From: support@paypal.com
+To: sharony@example.com
+Subject: Urgent: Verify Your PayPal Account
+Date: Sun, 02 Aug 2026 10:30:00 +0530
+
+----- Authentication -----
+SPF: Not Found
+DKIM: Not Found
+DMARC: Not Found
+
+----- URLs -----
+https://paypal-login-security.com/verify
+
+----- Final Analysis -----
+Suspicious Email (Contains URL)

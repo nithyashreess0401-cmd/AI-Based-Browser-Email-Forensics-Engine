@@ -1,0 +1,9 @@
+===== EMAIL METADATA =====
+
+From: support@paypal.com
+To: sharony@example.com
+Reply-To: attacker@gmail.com
+Subject: Urgent: Verify Your PayPal Account
+Date: Sun, 02 Aug 2026 10:30:00 +0530
+Message-ID: <123456789@example.com>
+Content-Type: text/plain
