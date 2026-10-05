@@ -1,3 +1,4 @@
+import os
 import pandas as pd
 import joblib
 import numpy as np
@@ -6,11 +7,13 @@ from scipy.sparse import hstack
 from urllib.parse import urlparse
 
 
+
 print("======================================")
 print("   AI PHISHING URL ANALYSIS - V3")
 print("======================================")
 
 
+<<<<<<< HEAD
 # --------------------------------------------------
 # URL STRUCTURAL FEATURES
 # --------------------------------------------------
@@ -76,25 +79,50 @@ MODEL_PATH = os.path.join(
     BASE_DIR,
     "models",
     "phishing_url_model_v3.joblib"
+=======
+# ==========================================================
+# PATHS
+# ==========================================================
+
+BASE_DIR = os.path.dirname(
+    os.path.abspath(__file__)
+)
+
+MODEL_PATH = os.path.join(
+    BASE_DIR,
+    "phishing_url_model_v2.joblib"
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
 )
 
 VECTORIZER_PATH = os.path.join(
     BASE_DIR,
+<<<<<<< HEAD
     "models",
     "phishing_url_vectorizer_v3.joblib"
 )
 
 HISTORY_PATH = os.path.join(
+=======
+    "phishing_url_vectorizer_v2.joblib"
+)
+
+HISTORY_FILE = os.path.join(
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
     BASE_DIR,
     "history.csv"
 )
 
+<<<<<<< HEAD
 OUTPUT_PATH = os.path.join(
+=======
+OUTPUT_FILE = os.path.join(
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
     BASE_DIR,
     "suspicious_urls_v3.csv"
 )
 
 
+<<<<<<< HEAD
 # --------------------------------------------------
 # LOAD MODEL
 # --------------------------------------------------
@@ -153,6 +181,58 @@ if "URL" not in df.columns:
 
     exit()
 
+=======
+# ==========================================================
+# CHECK FILES
+# ==========================================================
+
+if not os.path.exists(MODEL_PATH):
+    print("ERROR: AI model not found:")
+    print(MODEL_PATH)
+    raise SystemExit(1)
+
+if not os.path.exists(VECTORIZER_PATH):
+    print("ERROR: AI vectorizer not found:")
+    print(VECTORIZER_PATH)
+    raise SystemExit(1)
+
+if not os.path.exists(HISTORY_FILE):
+    print("ERROR: history.csv not found:")
+    print(HISTORY_FILE)
+    raise SystemExit(1)
+
+
+# ==========================================================
+# LOAD AI MODEL
+# ==========================================================
+
+print("\nLoading AI phishing model...")
+
+model = joblib.load(
+    MODEL_PATH
+)
+
+vectorizer = joblib.load(
+    VECTORIZER_PATH
+)
+
+print("AI model loaded successfully.")
+
+
+# ==========================================================
+# LOAD HISTORY
+# ==========================================================
+
+print("\nLoading browser history...")
+
+df = pd.read_csv(
+    HISTORY_FILE
+)
+
+if "URL" not in df.columns:
+    print("ERROR: URL column not found in history.csv")
+    raise SystemExit(1)
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
 
 df = df.dropna(
     subset=["URL"]
@@ -160,6 +240,7 @@ df = df.dropna(
 
 df["URL"] = df["URL"].astype(str)
 
+<<<<<<< HEAD
 
 # --------------------------------------------------
 # REMOVE DUPLICATES
@@ -226,6 +307,66 @@ url_features = hstack(
 # --------------------------------------------------
 
 print("Running AI predictions...")
+=======
+# Remove empty URLs
+df = df[
+    df["URL"].str.strip() != ""
+]
+
+
+# ==========================================================
+# REMOVE DUPLICATE URLS
+# ==========================================================
+
+unique_urls = (
+    df["URL"]
+    .drop_duplicates()
+    .tolist()
+)
+
+print(
+    f"\nTotal unique URLs: {len(unique_urls)}"
+)
+
+
+if not unique_urls:
+
+    print("No URLs available for analysis.")
+
+    empty_df = pd.DataFrame(
+        columns=[
+            "Browser",
+            "URL",
+            "Status",
+            "Confidence"
+        ]
+    )
+
+    empty_df.to_csv(
+        OUTPUT_FILE,
+        index=False
+    )
+
+    raise SystemExit(0)
+
+
+# ==========================================================
+# AI FEATURE EXTRACTION
+# ==========================================================
+
+print(
+    "\nStarting AI phishing analysis..."
+)
+
+url_features = vectorizer.transform(
+    unique_urls
+)
+
+
+# ==========================================================
+# PREDICTION
+# ==========================================================
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
 
 predictions = model.predict(
     url_features
@@ -236,14 +377,21 @@ probabilities = model.predict_proba(
 )
 
 
+<<<<<<< HEAD
 # --------------------------------------------------
 # CREATE RESULTS
 # --------------------------------------------------
+=======
+# ==========================================================
+# BUILD RESULTS
+# ==========================================================
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
 
 results = []
 
+
 for url, prediction, probability in zip(
-    urls,
+    unique_urls,
     predictions,
     probabilities
 ):
@@ -259,6 +407,7 @@ for url, prediction, probability in zip(
         confidence = probability[0]
 
 
+<<<<<<< HEAD
     # Browser name
     if "Browser" in df.columns:
 
@@ -336,12 +485,88 @@ total = len(result_df)
 
 benign = sum(
     result_df["Status"] == "BENIGN"
+=======
+    matching_rows = df[
+        df["URL"] == url
+    ]
+
+
+    browsers = (
+        matching_rows["Browser"]
+        .dropna()
+        .astype(str)
+        .unique()
+        .tolist()
+        if "Browser" in matching_rows.columns
+        else []
+    )
+
+
+    visit_times = (
+        matching_rows["Visit Time"]
+        .dropna()
+        .astype(str)
+        .tolist()
+        if "Visit Time" in matching_rows.columns
+        else []
+    )
+
+
+    results.append(
+        {
+            "Browser": ", ".join(
+                browsers
+            ),
+
+            "URL": url,
+
+            "Status": status,
+
+            "Confidence": round(
+                confidence * 100,
+                2
+            ),
+
+            "Visit Time": (
+                visit_times[0]
+                if visit_times
+                else ""
+            )
+        }
+    )
+
+
+# ==========================================================
+# SAVE RESULTS
+# ==========================================================
+
+result_df = pd.DataFrame(
+    results
 )
 
-phishing = sum(
-    result_df["Status"] == "PHISHING"
+result_df.to_csv(
+    OUTPUT_FILE,
+    index=False
 )
 
+
+# ==========================================================
+# SUMMARY
+# ==========================================================
+
+total = len(
+    result_df
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
+)
+
+phishing = int(
+    (
+        result_df["Status"]
+        == "PHISHING"
+    ).sum()
+)
+
+<<<<<<< HEAD
 
 print("\n======================================")
 print("V3 ANALYSIS SUMMARY")
@@ -353,12 +578,29 @@ print(
 
 print(
     f"Benign URLs: {benign}"
+=======
+benign = int(
+    (
+        result_df["Status"]
+        == "BENIGN"
+    ).sum()
+)
+
+
+print("\n======================================")
+print("       AI ANALYSIS SUMMARY")
+print("======================================")
+
+print(
+    f"Total URLs: {total}"
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
 )
 
 print(
     f"Phishing URLs: {phishing}"
 )
 
+<<<<<<< HEAD
 
 # --------------------------------------------------
 # RISK LEVEL
@@ -396,4 +638,20 @@ print(
 
 print(
     OUTPUT_PATH
+=======
+print(
+    f"Benign URLs: {benign}"
+)
+
+print(
+    f"\nResults saved to:"
+)
+
+print(
+    OUTPUT_FILE
+)
+
+print(
+    "\nAI phishing analysis completed!"
+>>>>>>> 99d42bb (Update browser forensic phishing analysis)
 )

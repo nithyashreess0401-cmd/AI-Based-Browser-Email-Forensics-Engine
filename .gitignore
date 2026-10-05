@@ -1,7 +1,50 @@
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
+venv/
+env/
+
+# Browser forensic generated data
+browser/history.csv
+browser/bookmarks.csv
+browser/downloads.csv
+browser/suspicious_urls_v3.csv
+history.csv
+bookmarks.csv
+downloads.csv
+suspicious_urls_v3.csv
+
+# Temporary SQLite/browser files
+temp_*
+*.sqlite
+*.sqlite3
+
+# Machine-learning model files
 *.joblib
-dataset/
+*.pkl
+*.pickle
+
+# Authentication / credentials
 credentials.json
 token.json
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Environment files
+.env
+.env.*
+
+# Dataset
+dataset/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

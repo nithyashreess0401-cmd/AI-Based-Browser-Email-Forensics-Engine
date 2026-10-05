@@ -3,103 +3,172 @@ import sqlite3
 import shutil
 import json
 import pandas as pd
+import tempfile
 
 
-USER = os.environ["USERPROFILE"]
+# ============================================================
+# GLOBAL DATA
+# ============================================================
+
+USER = os.environ.get("USERPROFILE", os.path.expanduser("~"))
 
 all_history = []
 all_bookmarks = []
 all_downloads = []
 
 
-# --------------------------------------------------
+# ============================================================
+# HELPER
+# ============================================================
+
+def safe_remove(path):
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+# ============================================================
 # CHROMIUM HISTORY
-# --------------------------------------------------
+# Chrome / Edge / Brave / Opera
+# ============================================================
 
-def extract_chromium_history(browser, history_path):
+def extract_chromium_history(browser, history_path, profile_name="Default"):
 
-    if not os.path.exists(history_path):
+    if not os.path.isfile(history_path):
         return
 
-    temp = f"temp_{browser}_history"
+    temp_path = None
 
     try:
-        shutil.copy2(history_path, temp)
 
-        conn = sqlite3.connect(temp)
+        # Create temporary copy because browser may keep
+        # the original SQLite database locked.
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix=f"{browser}_",
+            suffix="_History",
+            delete=False
+        )
+
+        temp_path = temp_file.name
+        temp_file.close()
+
+        shutil.copy2(history_path, temp_path)
+
+        conn = sqlite3.connect(temp_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        # ----------------------------------------------------
+        # HISTORY
+        # ----------------------------------------------------
+
+        cursor.execute(
+            """
             SELECT
                 urls.url,
                 urls.title,
                 datetime(
                     visits.visit_time / 1000000 - 11644473600,
-                    'unixepoch'
-                )
-            FROM urls
-            JOIN visits ON urls.id = visits.url
+                    'unixepoch',
+                    'localtime'
+                ) AS visit_time
+            FROM visits
+            INNER JOIN urls
+                ON visits.url = urls.id
+            WHERE urls.url IS NOT NULL
             ORDER BY visits.visit_time DESC
-        """)
+            """
+        )
 
-        for url, title, visit_time in cursor.fetchall():
+        rows = cursor.fetchall()
 
-            all_history.append({
-                "Browser": browser,
-                "URL": url,
-                "Title": title,
-                "Visit Time": visit_time
-            })
+        for url, title, visit_time in rows:
 
-        # Downloads
-        try:
-            cursor.execute("""
-                SELECT
-                    downloads.tab_url,
-                    downloads.target_path,
-                    datetime(
-                        downloads.start_time / 1000000 - 11644473600,
-                        'unixepoch'
-                    )
-                FROM downloads
-            """)
-
-            for url, path, download_time in cursor.fetchall():
-
-                all_downloads.append({
+            all_history.append(
+                {
                     "Browser": browser,
-                    "URL": url,
-                    "File": path,
-                    "Download Time": download_time
-                })
+                    "Profile": profile_name,
+                    "URL": url or "",
+                    "Title": title or "",
+                    "Visit Time": visit_time or ""
+                }
+            )
 
-        except Exception:
+        # ----------------------------------------------------
+        # DOWNLOADS
+        # ----------------------------------------------------
+
+        try:
+
+            cursor.execute(
+                """
+                SELECT
+                    tab_url,
+                    target_path,
+                    datetime(
+                        start_time / 1000000 - 11644473600,
+                        'unixepoch',
+                        'localtime'
+                    ) AS download_time
+                FROM downloads
+                """
+            )
+
+            download_rows = cursor.fetchall()
+
+            for url, path, download_time in download_rows:
+
+                all_downloads.append(
+                    {
+                        "Browser": browser,
+                        "Profile": profile_name,
+                        "URL": url or "",
+                        "File": path or "",
+                        "Download Time": download_time or ""
+                    }
+                )
+
+        except sqlite3.Error:
+            # Some Chromium versions may have a different
+            # downloads schema.
             pass
 
         conn.close()
-        os.remove(temp)
 
         print(
-            f"{browser}: "
-            f"{len([x for x in all_history if x['Browser'] == browser])} "
-            "history records found"
+            f"{browser} [{profile_name}]: "
+            f"{len(rows)} history records found"
+        )
+
+    except sqlite3.Error as e:
+
+        print(
+            f"{browser} [{profile_name}] SQLite error: {e}"
         )
 
     except Exception as e:
 
-        print(f"{browser} history error: {e}")
+        print(
+            f"{browser} [{profile_name}] history error: {e}"
+        )
 
-        if os.path.exists(temp):
-            os.remove(temp)
+    finally:
+
+        safe_remove(temp_path)
 
 
-# --------------------------------------------------
+# ============================================================
 # CHROMIUM BOOKMARKS
-# --------------------------------------------------
+# ============================================================
 
-def extract_chromium_bookmarks(browser, bookmark_path):
+def extract_chromium_bookmarks(
+    browser,
+    bookmark_path,
+    profile_name="Default"
+):
 
-    if not os.path.exists(bookmark_path):
+    if not os.path.isfile(bookmark_path):
         return
 
     try:
@@ -112,17 +181,28 @@ def extract_chromium_bookmarks(browser, bookmark_path):
 
             data = json.load(file)
 
+        count_before = len(all_bookmarks)
+
         def scan(node):
 
             if isinstance(node, dict):
 
                 if node.get("type") == "url":
 
-                    all_bookmarks.append({
-                        "Browser": browser,
-                        "Bookmark Name": node.get("name"),
-                        "URL": node.get("url")
-                    })
+                    all_bookmarks.append(
+                        {
+                            "Browser": browser,
+                            "Profile": profile_name,
+                            "Bookmark Name": node.get(
+                                "name",
+                                ""
+                            ),
+                            "URL": node.get(
+                                "url",
+                                ""
+                            )
+                        }
+                    )
 
                 for value in node.values():
                     scan(value)
@@ -134,78 +214,315 @@ def extract_chromium_bookmarks(browser, bookmark_path):
 
         scan(data)
 
+        count_after = len(all_bookmarks)
+
         print(
-            f"{browser}: "
-            f"{len([x for x in all_bookmarks if x['Browser'] == browser])} "
-            "bookmarks found"
+            f"{browser} [{profile_name}]: "
+            f"{count_after - count_before} bookmarks found"
+        )
+
+    except json.JSONDecodeError as e:
+
+        print(
+            f"{browser} [{profile_name}] "
+            f"bookmark JSON error: {e}"
         )
 
     except Exception as e:
 
-        print(f"{browser} bookmark error: {e}")
+        print(
+            f"{browser} [{profile_name}] "
+            f"bookmark error: {e}"
+        )
 
 
-# --------------------------------------------------
+# ============================================================
 # FIREFOX HISTORY
-# --------------------------------------------------
+# ============================================================
 
-def extract_firefox(profile_path):
+def extract_firefox_history(
+    profile_path,
+    profile_name=""
+):
 
-    places = os.path.join(
+    places_path = os.path.join(
         profile_path,
         "places.sqlite"
     )
 
-    if not os.path.exists(places):
+    if not os.path.isfile(places_path):
         return
 
-    temp = "temp_firefox_places.sqlite"
+    temp_path = None
 
     try:
 
-        shutil.copy2(places, temp)
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix="Firefox_",
+            suffix="_places.sqlite",
+            delete=False
+        )
 
-        conn = sqlite3.connect(temp)
+        temp_path = temp_file.name
+        temp_file.close()
+
+        shutil.copy2(
+            places_path,
+            temp_path
+        )
+
+        conn = sqlite3.connect(temp_path)
         cursor = conn.cursor()
 
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
-                url,
-                title,
+                p.url,
+                p.title,
                 datetime(
-                    last_visit_date / 1000000,
-                    'unixepoch'
-                )
-            FROM moz_places
-            WHERE last_visit_date IS NOT NULL
-            ORDER BY last_visit_date DESC
-        """)
+                    h.visit_date / 1000000,
+                    'unixepoch',
+                    'localtime'
+                ) AS visit_time
+            FROM moz_historyvisits h
+            INNER JOIN moz_places p
+                ON h.place_id = p.id
+            WHERE p.url IS NOT NULL
+            ORDER BY h.visit_date DESC
+            """
+        )
 
-        for url, title, visit_time in cursor.fetchall():
+        rows = cursor.fetchall()
 
-            all_history.append({
-                "Browser": "Firefox",
-                "URL": url,
-                "Title": title,
-                "Visit Time": visit_time
-            })
+        for url, title, visit_time in rows:
+
+            all_history.append(
+                {
+                    "Browser": "Firefox",
+                    "Profile": profile_name,
+                    "URL": url or "",
+                    "Title": title or "",
+                    "Visit Time": visit_time or ""
+                }
+            )
 
         conn.close()
-        os.remove(temp)
 
-        print("Firefox history extracted")
+        print(
+            f"Firefox [{profile_name}]: "
+            f"{len(rows)} history records found"
+        )
+
+    except sqlite3.Error as e:
+
+        print(
+            f"Firefox [{profile_name}] SQLite error: {e}"
+        )
 
     except Exception as e:
 
-        print(f"Firefox error: {e}")
+        print(
+            f"Firefox [{profile_name}] history error: {e}"
+        )
 
-        if os.path.exists(temp):
-            os.remove(temp)
+    finally:
+
+        safe_remove(temp_path)
 
 
-# --------------------------------------------------
-# FIND ALL BROWSER PROFILES
-# --------------------------------------------------
+# ============================================================
+# FIND CHROMIUM PROFILES
+# ============================================================
+
+def get_chromium_profiles(user_data_path):
+
+    profiles = []
+
+    if not os.path.isdir(user_data_path):
+        return profiles
+
+    try:
+
+        for item in os.listdir(user_data_path):
+
+            profile_path = os.path.join(
+                user_data_path,
+                item
+            )
+
+            if not os.path.isdir(profile_path):
+                continue
+
+            # Chrome profile folders normally look like:
+            #
+            # Default
+            # Profile 1
+            # Profile 2
+            # Profile 3
+            #
+            # Also allow Guest Profile.
+
+            if (
+                item == "Default"
+                or item.startswith("Profile ")
+                or item == "Guest Profile"
+            ):
+
+                profiles.append(
+                    (
+                        item,
+                        profile_path
+                    )
+                )
+
+    except Exception as e:
+
+        print(
+            f"Could not scan profiles: {e}"
+        )
+
+    return profiles
+
+
+# ============================================================
+# PROCESS CHROMIUM BROWSER
+# ============================================================
+
+def process_chromium_browser(
+    browser,
+    user_data_path
+):
+
+    if not os.path.isdir(user_data_path):
+
+        print(
+            f"{browser}: not installed"
+        )
+
+        return
+
+    print(
+        f"\nChecking {browser}..."
+    )
+
+    profiles = get_chromium_profiles(
+        user_data_path
+    )
+
+    if not profiles:
+
+        print(
+            f"{browser}: no browser profiles found"
+        )
+
+        return
+
+    for profile_name, profile_path in profiles:
+
+        print(
+            f"  Checking profile: "
+            f"{profile_name}"
+        )
+
+        # ----------------------------------------------------
+        # HISTORY
+        # ----------------------------------------------------
+
+        history_path = os.path.join(
+            profile_path,
+            "History"
+        )
+
+        if os.path.isfile(history_path):
+
+            extract_chromium_history(
+                browser,
+                history_path,
+                profile_name
+            )
+
+        else:
+
+            print(
+                f"  {browser}: history not found "
+                f"for {profile_name}"
+            )
+
+        # ----------------------------------------------------
+        # BOOKMARKS
+        # ----------------------------------------------------
+
+        bookmarks_path = os.path.join(
+            profile_path,
+            "Bookmarks"
+        )
+
+        if os.path.isfile(bookmarks_path):
+
+            extract_chromium_bookmarks(
+                browser,
+                bookmarks_path,
+                profile_name
+            )
+
+
+# ============================================================
+# FIREFOX PROFILES
+# ============================================================
+
+def process_firefox():
+
+    firefox_root = os.path.join(
+        USER,
+        "AppData",
+        "Roaming",
+        "Mozilla",
+        "Firefox",
+        "Profiles"
+    )
+
+    if not os.path.isdir(firefox_root):
+
+        print(
+            "\nFirefox: not installed "
+            "or profiles not found."
+        )
+
+        return
+
+    print(
+        "\nChecking Firefox..."
+    )
+
+    try:
+
+        for profile_name in os.listdir(
+            firefox_root
+        ):
+
+            profile_path = os.path.join(
+                firefox_root,
+                profile_name
+            )
+
+            if not os.path.isdir(profile_path):
+                continue
+
+            extract_firefox_history(
+                profile_path,
+                profile_name
+            )
+
+    except Exception as e:
+
+        print(
+            f"Firefox scanning error: {e}"
+        )
+
+
+# ============================================================
+# SCAN ALL BROWSERS
+# ============================================================
 
 def scan_browsers():
 
@@ -221,189 +538,315 @@ def scan_browsers():
         "Roaming"
     )
 
-    chromium_browsers = {
+    # --------------------------------------------------------
+    # CHROME
+    # --------------------------------------------------------
 
-        "Chrome": os.path.join(
-            local,
-            "Google",
-            "Chrome",
-            "User Data"
-        ),
-
-        "Edge": os.path.join(
-            local,
-            "Microsoft",
-            "Edge",
-            "User Data"
-        ),
-
-        "Brave": os.path.join(
-            local,
-            "BraveSoftware",
-            "Brave-Browser",
-            "User Data"
-        ),
-
-        "Opera": os.path.join(
-            roaming,
-            "Opera Software",
-            "Opera Stable"
-        )
-    }
-
-    # Chrome / Edge / Brave / Opera
-    for browser, user_data in chromium_browsers.items():
-
-        if not os.path.exists(user_data):
-            continue
-
-        print(f"\nChecking {browser}...")
-
-        try:
-
-            for profile in os.listdir(user_data):
-
-                profile_path = os.path.join(
-                    user_data,
-                    profile
-                )
-
-                if not os.path.isdir(profile_path):
-                    continue
-
-                history = os.path.join(
-                    profile_path,
-                    "History"
-                )
-
-                bookmarks = os.path.join(
-                    profile_path,
-                    "Bookmarks"
-                )
-
-                if os.path.exists(history):
-
-                    extract_chromium_history(
-                        browser,
-                        history
-                    )
-
-                if os.path.exists(bookmarks):
-
-                    extract_chromium_bookmarks(
-                        browser,
-                        bookmarks
-                    )
-
-        except Exception as e:
-
-            print(f"{browser} error: {e}")
-
-    # Firefox
-    firefox_root = os.path.join(
-        roaming,
-        "Mozilla",
-        "Firefox",
-        "Profiles"
+    chrome_path = os.path.join(
+        local,
+        "Google",
+        "Chrome",
+        "User Data"
     )
 
-    if os.path.exists(firefox_root):
+    process_chromium_browser(
+        "Chrome",
+        chrome_path
+    )
 
-        print("\nChecking Firefox...")
+    # --------------------------------------------------------
+    # EDGE
+    # --------------------------------------------------------
 
-        for profile in os.listdir(firefox_root):
+    edge_path = os.path.join(
+        local,
+        "Microsoft",
+        "Edge",
+        "User Data"
+    )
 
-            profile_path = os.path.join(
-                firefox_root,
-                profile
-            )
+    process_chromium_browser(
+        "Edge",
+        edge_path
+    )
 
-            if os.path.isdir(profile_path):
+    # --------------------------------------------------------
+    # BRAVE
+    # --------------------------------------------------------
 
-                extract_firefox(
-                    profile_path
-                )
+    brave_path = os.path.join(
+        local,
+        "BraveSoftware",
+        "Brave-Browser",
+        "User Data"
+    )
+
+    process_chromium_browser(
+        "Brave",
+        brave_path
+    )
+
+    # --------------------------------------------------------
+    # OPERA
+    # --------------------------------------------------------
+
+    opera_path = os.path.join(
+        roaming,
+        "Opera Software",
+        "Opera Stable"
+    )
+
+    process_chromium_browser(
+        "Opera",
+        opera_path
+    )
+
+    # --------------------------------------------------------
+    # FIREFOX
+    # --------------------------------------------------------
+
+    process_firefox()
 
 
-# --------------------------------------------------
-# SAVE RESULTS
-# --------------------------------------------------
+# ============================================================
+# SAVE HISTORY
+# ============================================================
 
-def save_results():
+def save_history():
 
-    if all_history:
+    output_file = os.path.join(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        ),
+        "history.csv"
+    )
 
-        history_df = pd.DataFrame(
-            all_history
+    if not all_history:
+
+        print(
+            "\nNo browser history was found."
         )
 
-        history_df.to_csv(
-            "history.csv",
+        # Still create CSV with correct columns.
+        empty_df = pd.DataFrame(
+            columns=[
+                "Browser",
+                "Profile",
+                "URL",
+                "Title",
+                "Visit Time"
+            ]
+        )
+
+        empty_df.to_csv(
+            output_file,
             index=False
         )
 
+        return
+
+    df = pd.DataFrame(
+        all_history
+    )
+
+    # Remove completely empty URLs.
+    df = df[
+        df["URL"]
+        .astype(str)
+        .str.strip()
+        != ""
+    ]
+
+    # Remove duplicate records.
+    df = df.drop_duplicates(
+        subset=[
+            "Browser",
+            "Profile",
+            "URL",
+            "Visit Time"
+        ]
+    )
+
+    # Sort newest first.
+    df["Visit Time"] = pd.to_datetime(
+        df["Visit Time"],
+        errors="coerce"
+    )
+
+    df = df.sort_values(
+        "Visit Time",
+        ascending=False
+    )
+
+    df["Visit Time"] = df[
+        "Visit Time"
+    ].dt.strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    df.to_csv(
+        output_file,
+        index=False
+    )
+
+    print(
+        f"\nHistory saved:"
+    )
+
+    print(
+        f"  File: {output_file}"
+    )
+
+    print(
+        f"  Total records: {len(df)}"
+    )
+
+    print(
+        f"  Browsers: "
+        f"{df['Browser'].nunique()}"
+    )
+
+
+# ============================================================
+# SAVE BOOKMARKS
+# ============================================================
+
+def save_bookmarks():
+
+    output_file = os.path.join(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        ),
+        "bookmarks.csv"
+    )
+
+    if not all_bookmarks:
+
         print(
-            f"\nHistory saved: "
-            f"{len(history_df)} records"
+            "\nNo bookmarks found."
         )
 
-    else:
-
-        print("\nNo browser history found.")
-
-    if all_bookmarks:
-
-        bookmarks_df = pd.DataFrame(
-            all_bookmarks
+        empty_df = pd.DataFrame(
+            columns=[
+                "Browser",
+                "Profile",
+                "Bookmark Name",
+                "URL"
+            ]
         )
 
-        bookmarks_df.to_csv(
-            "bookmarks.csv",
+        empty_df.to_csv(
+            output_file,
             index=False
         )
 
+        return
+
+    df = pd.DataFrame(
+        all_bookmarks
+    )
+
+    df = df.drop_duplicates()
+
+    df.to_csv(
+        output_file,
+        index=False
+    )
+
+    print(
+        f"\nBookmarks saved: "
+        f"{len(df)} records"
+    )
+
+
+# ============================================================
+# SAVE DOWNLOADS
+# ============================================================
+
+def save_downloads():
+
+    output_file = os.path.join(
+        os.path.dirname(
+            os.path.abspath(__file__)
+        ),
+        "downloads.csv"
+    )
+
+    if not all_downloads:
+
         print(
-            f"Bookmarks saved: "
-            f"{len(bookmarks_df)} records"
+            "\nNo downloads found."
         )
 
-    else:
-
-        print("No bookmarks found.")
-
-    if all_downloads:
-
-        downloads_df = pd.DataFrame(
-            all_downloads
+        empty_df = pd.DataFrame(
+            columns=[
+                "Browser",
+                "Profile",
+                "URL",
+                "File",
+                "Download Time"
+            ]
         )
 
-        downloads_df.to_csv(
-            "downloads.csv",
+        empty_df.to_csv(
+            output_file,
             index=False
         )
 
-        print(
-            f"Downloads saved: "
-            f"{len(downloads_df)} records"
-        )
+        return
 
-    else:
+    df = pd.DataFrame(
+        all_downloads
+    )
 
-        print("No downloads found.")
+    df = df.drop_duplicates()
+
+    df.to_csv(
+        output_file,
+        index=False
+    )
+
+    print(
+        f"\nDownloads saved: "
+        f"{len(df)} records"
+    )
 
 
-# --------------------------------------------------
+# ============================================================
 # MAIN
-# --------------------------------------------------
+# ============================================================
 
 if __name__ == "__main__":
 
-    print("\n======================================")
-    print("     MULTI-BROWSER FORENSICS")
-    print("======================================")
+    print()
+    print("=" * 60)
+    print("             MULTI-BROWSER FORENSICS")
+    print("=" * 60)
 
     scan_browsers()
 
-    save_results()
+    save_history()
 
-    print("\nBrowser forensic extraction completed!")
+    save_bookmarks()
+
+    save_downloads()
+
+    print()
+    print("=" * 60)
+    print("Browser forensic extraction completed!")
+    print("=" * 60)
+
+    print(
+        f"\nTotal history records : "
+        f"{len(all_history)}"
+    )
+
+    print(
+        f"Total bookmarks       : "
+        f"{len(all_bookmarks)}"
+    )
+
+    print(
+        f"Total downloads       : "
+        f"{len(all_downloads)}"
+    )
