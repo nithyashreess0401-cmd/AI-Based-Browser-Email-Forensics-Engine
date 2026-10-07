@@ -1,1 +1,8 @@
-
+streamlit
+pandas
+numpy
+scipy
+scikit-learn
+joblib
+reportlab
+Authlib
