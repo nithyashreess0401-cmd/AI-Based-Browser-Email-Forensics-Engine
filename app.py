@@ -1333,327 +1333,185 @@ if start_date > end_date:
 
 
 # ============================================================
-# BROWSER ANALYSIS
+# BROWSER ANALYSIS - CLOUD SAFE UPLOAD WORKFLOW
 # ============================================================
 
 st.divider()
 
-st.header(
-    "🔎 Browser Analysis"
+st.header("🔎 Browser Analysis")
+
+st.info(
+    "☁️ Because this application runs online, it cannot directly read "
+    "Chrome/Edge history from your computer. Upload the browser history "
+    "CSV exported/generated on your computer, then run the forensic analysis."
 )
 
+uploaded_history = st.file_uploader(
+    "📤 Upload Browser History CSV",
+    type=["csv"],
+    help=(
+        "Upload browser_history.csv or another browser-history CSV containing "
+        "a URL column. The file is processed only for this investigation."
+    ),
+)
+
+if uploaded_history is not None:
+    st.success(
+        f"✅ File selected: {uploaded_history.name}"
+    )
+
+    try:
+        preview_df = pd.read_csv(uploaded_history)
+        st.caption(
+            f"Preview: {len(preview_df)} records, "
+            f"{len(preview_df.columns)} columns"
+        )
+        st.dataframe(
+            preview_df.head(10),
+            use_container_width=True,
+            hide_index=True,
+        )
+    except Exception as preview_error:
+        st.error("❌ The uploaded CSV could not be read.")
+        st.exception(preview_error)
+
 if st.button(
-    "🔎 Run Browser Analysis",
+    "🔎 Analyze Uploaded Browser History",
     type="primary",
-    use_container_width=True
+    use_container_width=True,
+    disabled=uploaded_history is None,
 ):
 
     st.session_state.analysis_complete = False
-
     st.session_state.browser_results = None
+    st.session_state.analysis_start_date = start_date
+    st.session_state.analysis_end_date = end_date
 
-    st.session_state.analysis_start_date = (
-        start_date
-    )
+    try:
+        # Re-read from the beginning because the uploader object may have
+        # been consumed by the preview above.
+        uploaded_history.seek(0)
+        history_df = pd.read_csv(uploaded_history)
 
-    st.session_state.analysis_end_date = (
-        end_date
-    )
+        if history_df.empty:
+            st.error("❌ The uploaded browser history CSV is empty.")
+            st.stop()
 
-    # --------------------------------------------------------
-    # CHECK FILES
-    # --------------------------------------------------------
+        # --------------------------------------------------------
+        # Normalize common browser-history column names.
+        # --------------------------------------------------------
+        rename_map = {}
+        for column in history_df.columns:
+            normalized = str(column).strip().lower().replace("_", " ")
 
-    if not os.path.isdir(BROWSER_DIR):
+            if normalized in ["url", "web url", "website url", "link"]:
+                rename_map[column] = "URL"
+            elif normalized in ["title", "page title", "website title"]:
+                rename_map[column] = "Title"
+            elif normalized in [
+                "visit time",
+                "visited time",
+                "visit timestamp",
+                "timestamp",
+                "datetime",
+                "date time",
+            ]:
+                rename_map[column] = "Visit Time"
+            elif normalized in ["browser", "browser name"]:
+                rename_map[column] = "Browser"
 
-        st.error(
-            "❌ Browser folder was not found."
-        )
+        history_df = history_df.rename(columns=rename_map)
 
-        st.code(
-            BROWSER_DIR
-        )
+        if "URL" not in history_df.columns:
+            st.error(
+                "❌ The uploaded CSV does not contain a URL column. "
+                "Please upload a browser history CSV containing URL/address data."
+            )
+            st.write("Detected columns:", list(history_df.columns))
+            st.stop()
 
-        st.stop()
+        # --------------------------------------------------------
+        # Filter the investigation period when a visit-time column exists.
+        # If the date column cannot be parsed, analyze all uploaded records.
+        # --------------------------------------------------------
+        filtered_df = history_df.copy()
 
-    if not os.path.isfile(
-        BROWSER_ANALYSIS_FILE
-    ):
+        if "Visit Time" in filtered_df.columns:
+            parsed_time = pd.to_datetime(
+                filtered_df["Visit Time"],
+                errors="coerce",
+            )
 
-        st.error(
-            "❌ browser_analysis.py was not found."
-        )
+            valid_time_count = int(parsed_time.notna().sum())
 
-        st.code(
-            BROWSER_ANALYSIS_FILE
-        )
+            if valid_time_count > 0:
+                start_timestamp = pd.Timestamp(start_date)
+                end_timestamp = pd.Timestamp(end_date) + pd.Timedelta(days=1)
 
-        st.stop()
+                date_filtered = filtered_df[
+                    (parsed_time >= start_timestamp)
+                    & (parsed_time < end_timestamp)
+                ].copy()
 
-    # --------------------------------------------------------
-    # REMOVE OLD RESULT
-    # --------------------------------------------------------
+                if not date_filtered.empty:
+                    filtered_df = date_filtered
+                else:
+                    st.warning(
+                        "⚠️ No records matched the selected date range. "
+                        "The uploaded records will be analyzed instead."
+                    )
 
-    old_result = find_result_file()
-
-    if old_result:
-
-        try:
-            os.remove(old_result)
-        except Exception:
-            pass
-
-    # --------------------------------------------------------
-    # RUN
-    # --------------------------------------------------------
-
-    with st.spinner(
-        "🌐 Extracting browser history and analyzing URLs..."
-    ):
-
-        result = run_browser_analysis(
-            start_date,
-            end_date
-        )
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    #
-    # DO NOT immediately fail on return code 1.
-    #
-    # browser_analysis.py may return 1 because its trained
-    # model is missing while still successfully creating
-    # history.csv / suspicious_urls_v3.csv.
-    # --------------------------------------------------------
-
-    result_file = find_result_file()
-
-    history_exists = os.path.isfile(
-        HISTORY_FILE
-    )
-
-    # --------------------------------------------------------
-    # SHOW OUTPUT ONLY IF NEEDED
-    # --------------------------------------------------------
-
-    if result.stdout:
-
-        with st.expander(
-            "🌐 Browser Analysis Output",
-            expanded=False
+        # --------------------------------------------------------
+        # Run the same URL-risk logic used by the existing project.
+        # --------------------------------------------------------
+        with st.spinner(
+            "🔬 Analyzing uploaded browser history for suspicious and phishing URLs..."
         ):
+            result_df = local_url_analysis(filtered_df)
 
-            st.code(
-                result.stdout
-            )
-
-    # --------------------------------------------------------
-    # IF RESULT EXISTS, CONTINUE
-    # --------------------------------------------------------
-
-    if result_file:
-
-        try:
-
-            result_df = pd.read_csv(
-                result_file
-            )
-
-            result_df = normalize_status_column(
-                result_df
-            )
-
-            st.session_state.browser_results = (
-                result_df
-            )
-
-            st.session_state.analysis_complete = True
-
-            st.session_state.analysis_start_date = (
-                start_date
-            )
-
-            st.session_state.analysis_end_date = (
-                end_date
-            )
-
-            if history_exists:
-
-                st.success(
-                    "✅ Browser history extraction completed."
-                )
-
-            st.success(
-                "✅ Browser URL analysis completed."
-            )
-
-            # ------------------------------------------------
-            # Do not show the model error to the user if
-            # usable results were successfully generated.
-            # ------------------------------------------------
-
-        except Exception as error:
-
-            st.error(
-                "❌ The analysis result was created "
-                "but could not be read."
-            )
-
-            st.exception(error)
-
+        if result_df.empty:
+            st.error("❌ No usable URL records were found in the uploaded file.")
             st.stop()
 
-    else:
+        result_df = normalize_status_column(result_df)
 
-        # ----------------------------------------------------
-        # NO RESULT FILE
-        #
-        # Try local analysis directly from history.csv.
-        # ----------------------------------------------------
+        # Save the generated result in the same location expected by the
+        # existing report/download workflow.
+        result_df.to_csv(
+            RESULT_FILE_ROOT,
+            index=False,
+        )
+        result_df.to_csv(
+            RESULT_FILE_BROWSER,
+            index=False,
+        )
 
-        if history_exists:
+        # Save the uploaded history as the current investigation history.
+        filtered_df.to_csv(
+            HISTORY_FILE,
+            index=False,
+        )
 
-            try:
+        st.session_state.browser_results = result_df
+        st.session_state.analysis_complete = True
+        st.session_state.analysis_start_date = start_date
+        st.session_state.analysis_end_date = end_date
 
-                history_df = pd.read_csv(
-                    HISTORY_FILE
-                )
+        total, phishing, benign, suspicious, risk = calculate_statistics(result_df)
 
-                # --------------------------------------------
-                # Filter selected investigation period
-                # --------------------------------------------
+        st.success(
+            f"✅ Browser forensic analysis completed: {total} URL records analyzed."
+        )
 
-                if "Visit Time" in history_df.columns:
+        st.info(
+            f"Risk summary — Phishing: {phishing} | "
+            f"Suspicious: {suspicious} | Benign: {benign} | "
+            f"Overall risk: {risk}"
+        )
 
-                    history_df["Parsed Time"] = (
-                        pd.to_datetime(
-                            history_df["Visit Time"],
-                            errors="coerce"
-                        )
-                    )
-
-                    start_timestamp = pd.Timestamp(
-                        start_date
-                    )
-
-                    end_timestamp = (
-                        pd.Timestamp(end_date)
-                        + pd.Timedelta(days=1)
-                    )
-
-                    filtered_df = history_df[
-                        (
-                            history_df["Parsed Time"]
-                            >= start_timestamp
-                        )
-                        &
-                        (
-                            history_df["Parsed Time"]
-                            < end_timestamp
-                        )
-                    ].copy()
-
-                    if filtered_df.empty:
-
-                        filtered_df = history_df.copy()
-
-                else:
-
-                    filtered_df = history_df.copy()
-
-                # --------------------------------------------
-                # Local URL analysis
-                # --------------------------------------------
-
-                fallback_df = local_url_analysis(
-                    filtered_df
-                )
-
-                if not fallback_df.empty:
-
-                    fallback_df = (
-                        normalize_status_column(
-                            fallback_df
-                        )
-                    )
-
-                    # ----------------------------------------
-                    # Save fallback result
-                    # ----------------------------------------
-
-                    fallback_df.to_csv(
-                        RESULT_FILE_BROWSER,
-                        index=False
-                    )
-
-                    st.session_state.browser_results = (
-                        fallback_df
-                    )
-
-                    st.session_state.analysis_complete = True
-
-                    st.session_state.analysis_start_date = (
-                        start_date
-                    )
-
-                    st.session_state.analysis_end_date = (
-                        end_date
-                    )
-
-                    st.success(
-                        "✅ Browser history extracted and "
-                        "local URL-risk analysis completed."
-                    )
-
-                else:
-
-                    st.error(
-                        "❌ Browser history was found, "
-                        "but no URL records were available."
-                    )
-
-                    st.stop()
-
-            except Exception as error:
-
-                st.error(
-                    "❌ Browser analysis could not be completed."
-                )
-
-                st.exception(error)
-
-                if result.stderr:
-
-                    with st.expander(
-                        "Technical Error Details",
-                        expanded=True
-                    ):
-
-                        st.code(
-                            result.stderr
-                        )
-
-                st.stop()
-
-        else:
-
-            st.error(
-                "❌ Browser analysis failed and no "
-                "history.csv was generated."
-            )
-
-            if result.stderr:
-
-                with st.expander(
-                    "Technical Error Details",
-                    expanded=True
-                ):
-
-                    st.code(
-                        result.stderr
-                    )
-
-            st.stop()
+    except Exception as error:
+        st.error("❌ Browser analysis could not be completed.")
+        st.exception(error)
 
 
 # ============================================================
