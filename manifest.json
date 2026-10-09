@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "AI Forensics Browser Collector",
+  "version": "1.0.0",
+  "description": "Collect browser history for an authorized forensic investigation.",
+  "permissions": ["history"],
+  "action": {
+    "default_popup": "popup.html"
+  }
+}
