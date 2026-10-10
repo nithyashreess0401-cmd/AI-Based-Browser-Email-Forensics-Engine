@@ -1,284 +1,250 @@
+```python
 import os
 import base64
+from datetime import datetime, timedelta
+from email import message_from_bytes
+from email.policy import default
 
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+
+# --------------------------------------------------
+# CONFIGURATION
+# --------------------------------------------------
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CREDENTIALS_FILE = os.path.join(BASE_DIR, "credentials.json")
+TOKEN_FILE = os.path.join(BASE_DIR, "token.json")
+EMAIL_DIR = os.path.join(BASE_DIR, "emails")
+EMAIL_FILE = os.path.join(EMAIL_DIR, "gmail_message.eml")
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 
-# Always use the folder where this Python file is located
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# --------------------------------------------------
+# CONNECT TO GMAIL
+# --------------------------------------------------
 
-CREDENTIALS_FILE = os.path.join(
-    BASE_DIR,
-    "credentials.json"
-)
+def connect_to_gmail():
+    """Authenticate and return the Gmail API service."""
 
-TOKEN_FILE = os.path.join(
-    BASE_DIR,
-    "token.json"
-)
+    creds = None
 
-
-creds = None
-
-
-# Check for saved login
-if os.path.exists(TOKEN_FILE):
-
-    print("Saved Gmail login found.")
-
-    creds = Credentials.from_authorized_user_file(
-        TOKEN_FILE,
-        SCOPES
-    )
-
-
-# If there is no valid login, authenticate
-if not creds or not creds.valid:
-
-    if creds and creds.expired and creds.refresh_token:
-
-        print("Refreshing Gmail login...")
-
-        creds.refresh(Request())
-
-    else:
-
-        print("Opening Google login...")
-
-        flow = InstalledAppFlow.from_client_secrets_file(
-            CREDENTIALS_FILE,
-            SCOPES
+    if os.path.exists(TOKEN_FILE):
+        creds = Credentials.from_authorized_user_file(
+            TOKEN_FILE, SCOPES
         )
 
-        creds = flow.run_local_server(
-            port=0,
-            access_type="offline",
-            prompt="consent"
-        )
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            if not os.path.exists(CREDENTIALS_FILE):
+                raise FileNotFoundError(
+                    f"Missing credentials file: {CREDENTIALS_FILE}"
+                )
+
+            flow = InstalledAppFlow.from_client_secrets_file(
+                CREDENTIALS_FILE, SCOPES
+            )
+            creds = flow.run_local_server(port=0)
+
+        with open(TOKEN_FILE, "w", encoding="utf-8") as token:
+            token.write(creds.to_json())
+
+    return build("gmail", "v1", credentials=creds)
 
 
-    # Save the authorization
-    with open(TOKEN_FILE, "w") as token:
-
-        token.write(
-            creds.to_json()
-        )
-
-    print("Gmail login saved to token.json")
-
-
-# Connect to Gmail
-service = build(
-    "gmail",
-    "v1",
-    credentials=creds
-)
-
-print("\n===== GMAIL CONNECTION SUCCESSFUL =====")
-
-
-# ==========================================================
+# --------------------------------------------------
 # SEARCH EMAILS
-# ==========================================================
+# --------------------------------------------------
 
-email_address = input(
-    "Enter sender email address: "
-).strip()
+def search_emails(service, sender_email, start_date, end_date):
+    """
+    Search emails from a sender between inclusive dates.
 
-start_date = input(
-    "Enter start date (YYYY-MM-DD): "
-).strip()
+    Dates must use YYYY-MM-DD.
+    """
 
-end_date = input(
-    "Enter end date (YYYY-MM-DD): "
-).strip()
+    sender_email = sender_email.strip()
 
+    if not sender_email or "@" not in sender_email:
+        raise ValueError("Enter a valid sender email address.")
 
-# Convert YYYY-MM-DD to Gmail's date format
-gmail_start_date = start_date.replace(
-    "-",
-    "/"
-)
+    start = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end = datetime.strptime(end_date, "%Y-%m-%d").date()
 
-gmail_end_date = end_date.replace(
-    "-",
-    "/"
-)
+    if start > end:
+        raise ValueError("Start date must be before or equal to end date.")
 
+    # Gmail after/before boundaries are exclusive.
+    after_date = start - timedelta(days=1)
+    before_date = end + timedelta(days=1)
 
-# Gmail search query
-query = (
-    f"from:{email_address} "
-    f"after:{gmail_start_date} "
-    f"before:{gmail_end_date}"
-)
-
-
-print("\nSearching Gmail...")
-print("Search:", query)
-
-
-results = service.users().messages().list(
-    userId="me",
-    q=query,
-    maxResults=20
-).execute()
-
-
-messages = results.get(
-    "messages",
-    []
-)
-
-
-print(
-    "Number of emails found:",
-    len(messages)
-)
-
-
-# Stop safely if no emails were found
-if not messages:
-
-    print(
-        "No matching emails found."
+    query = (
+        f"from:{sender_email} "
+        f"after:{after_date.strftime('%Y/%m/%d')} "
+        f"before:{before_date.strftime('%Y/%m/%d')}"
     )
 
-    exit()
-
-
-print(
-    "\n===== GMAIL EMAILS =====\n"
-)
-
-
-# ==========================================================
-# DISPLAY MATCHING EMAILS
-# ==========================================================
-
-for i, message in enumerate(
-    messages,
-    start=1
-):
-
-    email_data = service.users().messages().get(
+    response = service.users().messages().list(
         userId="me",
-        id=message["id"],
-        format="metadata",
-        metadataHeaders=[
-            "From",
-            "To",
-            "Subject",
-            "Date"
-        ]
+        q=query,
+        maxResults=100
     ).execute()
 
+    messages = response.get("messages", [])
 
-    headers = email_data[
-        "payload"
-    ][
-        "headers"
-    ]
+    # Fetch further pages if Gmail returns more than one page.
+    while response.get("nextPageToken"):
+        response = service.users().messages().list(
+            userId="me",
+            q=query,
+            maxResults=100,
+            pageToken=response["nextPageToken"]
+        ).execute()
+
+        messages.extend(response.get("messages", []))
+
+    return messages
 
 
-    print(
-        f"Email {i}"
+# --------------------------------------------------
+# GET EMAIL DETAILS
+# --------------------------------------------------
+
+def get_email_details(service, message_id):
+    """Retrieve email headers and the raw email message."""
+
+    result = service.users().messages().get(
+        userId="me",
+        id=message_id,
+        format="raw"
+    ).execute()
+
+    raw_data = base64.urlsafe_b64decode(result["raw"])
+    email_message = message_from_bytes(
+        raw_data, policy=default
     )
 
+    details = {
+        "id": message_id,
+        "From": email_message.get("From", "Not found"),
+        "To": email_message.get("To", "Not found"),
+        "Subject": email_message.get("Subject", "(No Subject)"),
+        "Date": email_message.get("Date", "Not found"),
+        "Message-ID": email_message.get("Message-ID", "Not found"),
+    }
 
-    for header in headers:
-
-        print(
-            f"{header['name']}: "
-            f"{header['value']}"
-        )
-
-
-    print(
-        "----------------------------"
-    )
+    return details, raw_data
 
 
-# ==========================================================
-# SELECT EMAIL FOR FORENSIC ANALYSIS
-# ==========================================================
+# --------------------------------------------------
+# SAVE SELECTED EMAIL
+# --------------------------------------------------
 
-while True:
+def save_email(raw_data):
+    """Save the selected email in EML format for forensic analysis."""
 
+    os.makedirs(EMAIL_DIR, exist_ok=True)
+
+    with open(EMAIL_FILE, "wb") as email_file:
+        email_file.write(raw_data)
+
+    print(f"\nSelected email saved to: {EMAIL_FILE}")
+
+
+# --------------------------------------------------
+# MAIN PROGRAM
+# --------------------------------------------------
+
+def main():
     try:
-        choice = int(
-            input(
-                "\nEnter the Email number you want to analyze: "
-            )
+        service = connect_to_gmail()
+
+        print("\n========== GMAIL EMAIL FORENSICS ==========")
+
+        sender_email = input(
+            "Enter sender email address: "
+        ).strip()
+
+        start_date = input(
+            "Enter start date (YYYY-MM-DD): "
+        ).strip()
+
+        end_date = input(
+            "Enter end date (YYYY-MM-DD): "
+        ).strip()
+
+        messages = search_emails(
+            service,
+            sender_email,
+            start_date,
+            end_date
         )
 
-        if 1 <= choice <= len(messages):
-            break
+        if not messages:
+            print("\nNo matching emails found.")
+            return
+
+        print(f"\nFound {len(messages)} matching email(s):\n")
+
+        email_options = []
+
+        for index, message in enumerate(messages, start=1):
+            details, raw_data = get_email_details(
+                service, message["id"]
+            )
+
+            email_options.append((details, raw_data))
+
+            print(f"Email {index}")
+            print(f"From: {details['From']}")
+            print(f"To: {details['To']}")
+            print(f"Subject: {details['Subject']}")
+            print(f"Date: {details['Date']}")
+            print("-" * 50)
+
+        while True:
+            try:
+                choice = int(input(
+                    "\nEnter the email number to analyze: "
+                ))
+
+                if 1 <= choice <= len(email_options):
+                    break
+
+                print(
+                    f"Enter a number between 1 and {len(email_options)}."
+                )
+
+            except ValueError:
+                print("Please enter a valid number.")
+
+        selected_details, selected_raw_data = email_options[
+            choice - 1
+        ]
+
+        save_email(selected_raw_data)
+
+        print("\nSelected email:")
+        for key, value in selected_details.items():
+            print(f"{key}: {value}")
 
         print(
-            f"Please enter a number between 1 and {len(messages)}."
+            "\nNow run 'python main.py' to generate the forensic report."
         )
 
-    except ValueError:
-        print("Please enter a valid number.")
+    except ValueError as error:
+        print(f"\nInput error: {error}")
+
+    except Exception as error:
+        print(f"\nGmail operation failed: {error}")
 
 
-# Get the selected email ID
-message_id = messages[choice - 1]["id"]
-
-
-raw_message = service.users().messages().get(
-    userId="me",
-    id=message_id,
-    format="raw"
-).execute()
-
-
-# Decode the Gmail message
-email_bytes = base64.urlsafe_b64decode(
-    raw_message["raw"] + "=="
-)
-
-
-# ==========================================================
-# SAVE EMAIL AS .EML
-# ==========================================================
-
-email_file = os.path.join(
-    BASE_DIR,
-    "emails",
-    "gmail_message.eml"
-)
-
-
-# Make sure the emails folder exists
-os.makedirs(
-    os.path.dirname(email_file),
-    exist_ok=True
-)
-
-
-with open(
-    email_file,
-    "wb"
-) as file:
-
-    file.write(
-        email_bytes
-    )
-
-
-print(
-    "\n===== EMAIL SAVED ====="
-)
-
-print(
-    "Saved to:",
-    email_file
-)
+if __name__ == "__main__":
+    main()
