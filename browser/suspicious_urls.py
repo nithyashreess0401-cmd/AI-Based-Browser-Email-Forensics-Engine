@@ -1,657 +1,177 @@
 import os
-import pandas as pd
 import joblib
-import numpy as np
-import os
-from scipy.sparse import hstack
+import pandas as pd
 from urllib.parse import urlparse
 
-
-
-print("======================================")
-print("   AI PHISHING URL ANALYSIS - V3")
-print("======================================")
-
-
-<<<<<<< HEAD
 # --------------------------------------------------
-# URL STRUCTURAL FEATURES
-# --------------------------------------------------
-
-def extract_url_features(url):
-
-    url = str(url)
-
-    try:
-
-        parsed = urlparse(url)
-
-        domain = parsed.netloc
-        path = parsed.path
-        query = parsed.query
-
-        features = [
-            len(url),
-            len(domain),
-            len(path),
-            len(query),
-
-            domain.count("."),
-            domain.count("-"),
-            domain.count("_"),
-
-            url.count("/"),
-            url.count("?"),
-            url.count("="),
-            url.count("&"),
-            url.count("%"),
-
-            sum(c.isdigit() for c in url),
-            sum(c.isalpha() for c in url),
-
-            int(url.startswith("https://")),
-            int(url.startswith("http://")),
-
-            int("@" in url),
-            int("://" in url),
-
-            len(set(domain))
-        ]
-
-        return features
-
-    except Exception:
-
-        return [0] * 19
-
-
-# --------------------------------------------------
-# PROJECT PATHS
-# --------------------------------------------------
-
-BASE_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
-)
-
-MODEL_PATH = os.path.join(
-    BASE_DIR,
-    "models",
-    "phishing_url_model_v3.joblib"
-=======
-# ==========================================================
 # PATHS
-# ==========================================================
-
-BASE_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
-
-MODEL_PATH = os.path.join(
-    BASE_DIR,
-    "phishing_url_model_v2.joblib"
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-)
-
-VECTORIZER_PATH = os.path.join(
-    BASE_DIR,
-<<<<<<< HEAD
-    "models",
-    "phishing_url_vectorizer_v3.joblib"
-)
-
-HISTORY_PATH = os.path.join(
-=======
-    "phishing_url_vectorizer_v2.joblib"
-)
-
-HISTORY_FILE = os.path.join(
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-    BASE_DIR,
-    "history.csv"
-)
-
-<<<<<<< HEAD
-OUTPUT_PATH = os.path.join(
-=======
-OUTPUT_FILE = os.path.join(
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-    BASE_DIR,
-    "suspicious_urls_v3.csv"
-)
-
-
-<<<<<<< HEAD
 # --------------------------------------------------
-# LOAD MODEL
-# --------------------------------------------------
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(BASE_DIR)
 
-print("\nLoading V3 AI phishing model...")
+MODEL_PATH = os.path.join(PROJECT_DIR, "models", "phishing_model.pkl")
+SCALER_PATH = os.path.join(PROJECT_DIR, "models", "scaler.pkl")
+HISTORY_PATH = os.path.join(BASE_DIR, "history.csv")
+OUTPUT_PATH = os.path.join(BASE_DIR, "suspicious_urls_v3.csv")
 
-if not os.path.exists(MODEL_PATH):
+FEATURES = [
+    "url_length",
+    "valid_url",
+    "at_symbol",
+    "sensitive_words_count",
+    "path_length",
+    "isHttps",
+    "nb_dots",
+    "nb_hyphens",
+    "nb_and",
+    "nb_or",
+    "nb_www",
+    "nb_com",
+    "nb_underscore",
+]
 
-    print("\nERROR: V3 model not found.")
-    print(MODEL_PATH)
-    print("\nRun train_phishing_model.py first.")
-    exit()
-
-if not os.path.exists(VECTORIZER_PATH):
-
-    print("\nERROR: V3 vectorizer not found.")
-    print(VECTORIZER_PATH)
-    print("\nRun train_phishing_model.py first.")
-    exit()
-
-
-model = joblib.load(MODEL_PATH)
-
-vectorizer = joblib.load(VECTORIZER_PATH)
-
-print("V3 AI model loaded successfully!")
-
-
-# --------------------------------------------------
-# LOAD BROWSER HISTORY
-# --------------------------------------------------
-
-print("\nLoading browser history...")
-
-if not os.path.exists(HISTORY_PATH):
-
-    print("\nERROR: history.csv not found.")
-    print(HISTORY_PATH)
-    exit()
-
-
-df = pd.read_csv(HISTORY_PATH)
-
-
-# --------------------------------------------------
-# CHECK URL COLUMN
-# --------------------------------------------------
-
-if "URL" not in df.columns:
-
-    print("\nERROR: URL column not found in history.csv")
-
-    print("\nAvailable columns:")
-
-    print(df.columns.tolist())
-
-    exit()
-
-=======
-# ==========================================================
-# CHECK FILES
-# ==========================================================
-
-if not os.path.exists(MODEL_PATH):
-    print("ERROR: AI model not found:")
-    print(MODEL_PATH)
-    raise SystemExit(1)
-
-if not os.path.exists(VECTORIZER_PATH):
-    print("ERROR: AI vectorizer not found:")
-    print(VECTORIZER_PATH)
-    raise SystemExit(1)
-
-if not os.path.exists(HISTORY_FILE):
-    print("ERROR: history.csv not found:")
-    print(HISTORY_FILE)
-    raise SystemExit(1)
-
-
-# ==========================================================
-# LOAD AI MODEL
-# ==========================================================
-
-print("\nLoading AI phishing model...")
-
-model = joblib.load(
-    MODEL_PATH
-)
-
-vectorizer = joblib.load(
-    VECTORIZER_PATH
-)
-
-print("AI model loaded successfully.")
-
-
-# ==========================================================
-# LOAD HISTORY
-# ==========================================================
-
-print("\nLoading browser history...")
-
-df = pd.read_csv(
-    HISTORY_FILE
-)
-
-if "URL" not in df.columns:
-    print("ERROR: URL column not found in history.csv")
-    raise SystemExit(1)
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-
-df = df.dropna(
-    subset=["URL"]
-)
-
-df["URL"] = df["URL"].astype(str)
-
-<<<<<<< HEAD
-
-# --------------------------------------------------
-# REMOVE DUPLICATES
-# --------------------------------------------------
-
-urls = (
-    df["URL"]
-    .drop_duplicates()
-    .tolist()
-)
-
-print(
-    f"\nTotal unique URLs to analyze: {len(urls)}"
-)
-
-if len(urls) == 0:
-
-    print("\nNo URLs found.")
-
-    exit()
-
-
-# --------------------------------------------------
-# TF-IDF FEATURES
-# --------------------------------------------------
-
-print("\nCreating TF-IDF features...")
-
-url_tfidf = vectorizer.transform(
-    urls
-)
-
-
-# --------------------------------------------------
-# STRUCTURAL FEATURES
-# --------------------------------------------------
-
-print("Creating structural URL features...")
-
-url_structural = np.array(
-    [
-        extract_url_features(url)
-        for url in urls
-    ]
-)
-
-
-# --------------------------------------------------
-# COMBINE FEATURES
-# --------------------------------------------------
-
-print("Combining AI features...")
-
-url_features = hstack(
-    [
-        url_tfidf,
-        url_structural
-    ]
-)
-
-
-# --------------------------------------------------
-# PREDICTION
-# --------------------------------------------------
-
-print("Running AI predictions...")
-=======
-# Remove empty URLs
-df = df[
-    df["URL"].str.strip() != ""
+SUSPICIOUS_WORDS = [
+    "login", "verify", "update", "secure", "account",
+    "password", "signin", "banking", "confirm", "wallet",
+    "payment", "authenticate", "suspend"
 ]
 
 
-# ==========================================================
-# REMOVE DUPLICATE URLS
-# ==========================================================
+# --------------------------------------------------
+# URL FEATURE EXTRACTION
+# Must match the features used to train the AI model
+# --------------------------------------------------
+def extract_features(url):
+    url = str(url).strip()
+    lower_url = url.lower()
 
-unique_urls = (
-    df["URL"]
-    .drop_duplicates()
-    .tolist()
-)
-
-print(
-    f"\nTotal unique URLs: {len(unique_urls)}"
-)
-
-
-if not unique_urls:
-
-    print("No URLs available for analysis.")
-
-    empty_df = pd.DataFrame(
-        columns=[
-            "Browser",
-            "URL",
-            "Status",
-            "Confidence"
-        ]
+    parsed = urlparse(
+        url if "://" in url else "//" + url
     )
 
-    empty_df.to_csv(
-        OUTPUT_FILE,
-        index=False
-    )
+    domain = parsed.netloc.split("@")[-1].split(":")[0]
 
-    raise SystemExit(0)
-
-
-# ==========================================================
-# AI FEATURE EXTRACTION
-# ==========================================================
-
-print(
-    "\nStarting AI phishing analysis..."
-)
-
-url_features = vectorizer.transform(
-    unique_urls
-)
-
-
-# ==========================================================
-# PREDICTION
-# ==========================================================
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-
-predictions = model.predict(
-    url_features
-)
-
-probabilities = model.predict_proba(
-    url_features
-)
+    return {
+        "url_length": len(url),
+        "valid_url": int(bool(domain and "." in domain)),
+        "at_symbol": int("@" in url),
+        "sensitive_words_count": sum(
+            lower_url.count(word) for word in SUSPICIOUS_WORDS
+        ),
+        "path_length": len(parsed.path),
+        "isHttps": int(lower_url.startswith("https://")),
+        "nb_dots": lower_url.count("."),
+        "nb_hyphens": lower_url.count("-"),
+        "nb_and": lower_url.count("and"),
+        "nb_or": lower_url.count("or"),
+        "nb_www": lower_url.count("www"),
+        "nb_com": lower_url.count(".com"),
+        "nb_underscore": lower_url.count("_"),
+    }
 
 
-<<<<<<< HEAD
-# --------------------------------------------------
-# CREATE RESULTS
-# --------------------------------------------------
-=======
-# ==========================================================
-# BUILD RESULTS
-# ==========================================================
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
+def main():
+    print("=== AI BROWSER PHISHING ANALYSIS ===")
 
-results = []
+    for path in [MODEL_PATH, SCALER_PATH, HISTORY_PATH]:
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Required file not found: {path}")
 
+    model = joblib.load(MODEL_PATH)
+    scaler = joblib.load(SCALER_PATH)
 
-for url, prediction, probability in zip(
-    unique_urls,
-    predictions,
-    probabilities
-):
+    if len(FEATURES) != getattr(model, "n_features_in_", len(FEATURES)):
+        raise ValueError("AI model expects a different number of features.")
 
-    if prediction == 1:
+    if len(FEATURES) != getattr(scaler, "n_features_in_", len(FEATURES)):
+        raise ValueError("Scaler expects a different number of features.")
 
-        status = "PHISHING"
-        confidence = probability[1]
+    history = pd.read_csv(HISTORY_PATH)
 
-    else:
-
-        status = "BENIGN"
-        confidence = probability[0]
-
-
-<<<<<<< HEAD
-    # Browser name
-    if "Browser" in df.columns:
-
-        browsers = (
-            df[df["URL"] == url]["Browser"]
-            .dropna()
-            .unique()
-            .tolist()
+    if "URL" not in history.columns:
+        raise ValueError(
+            f"history.csv needs a 'URL' column. Found: {history.columns.tolist()}"
         )
 
-        browser_name = ", ".join(browsers)
+    history = history.dropna(subset=["URL"]).copy()
+    history["URL"] = history["URL"].astype(str).str.strip()
+    history = history[history["URL"] != ""]
 
-    else:
+    unique_urls = history["URL"].drop_duplicates().tolist()
 
-        browser_name = "Unknown"
+    if not unique_urls:
+        raise ValueError("No URLs found in browser history.")
 
+    feature_df = pd.DataFrame(
+        [extract_features(url) for url in unique_urls],
+        columns=FEATURES
+    )
 
-    results.append({
+    scaled_features = scaler.transform(feature_df)
+    predictions = model.predict(scaled_features)
+    probabilities = model.predict_proba(scaled_features)
+    classes = list(model.classes_)
 
-        "Browser": browser_name,
+    # Identify the phishing class from the model's actual labels.
+    phishing_class = next(
+        (
+            c for c in classes
+            if str(c).strip().lower() in
+            {"1", "phishing", "malicious", "unsafe"}
+        ),
+        None
+    )
 
-        "URL": url,
-
-        "Status": status,
-
-        "Confidence": round(
-            confidence * 100,
-            2
+    if phishing_class is None:
+        raise ValueError(
+            f"Cannot identify phishing label from model classes: {classes}. "
+            "Check the target labels used during training."
         )
 
-    })
+    phishing_index = classes.index(phishing_class)
+    results = []
 
+    for url, prediction, probs in zip(
+        unique_urls, predictions, probabilities
+    ):
+        matching = history[history["URL"] == url]
 
-# --------------------------------------------------
-# CREATE DATAFRAME
-# --------------------------------------------------
-
-result_df = pd.DataFrame(
-    results
-)
-
-
-# --------------------------------------------------
-# SAVE RESULTS
-# --------------------------------------------------
-
-result_df.to_csv(
-    OUTPUT_PATH,
-    index=False
-)
-
-
-# --------------------------------------------------
-# DISPLAY RESULTS
-# --------------------------------------------------
-
-print("\n======================================")
-print("V3 AI PHISHING URL ANALYSIS")
-print("======================================")
-
-if len(result_df) > 0:
-
-    print(
-        result_df.head(20).to_string(
-            index=False
+        browser_names = (
+            matching["Browser"].dropna().astype(str).unique().tolist()
+            if "Browser" in matching.columns else []
         )
-    )
 
+        visit_times = (
+            matching["Visit Time"].dropna().astype(str).tolist()
+            if "Visit Time" in matching.columns else []
+        )
 
-# --------------------------------------------------
-# SUMMARY
-# --------------------------------------------------
+        status = (
+            "PHISHING" if prediction == phishing_class else "BENIGN"
+        )
 
-total = len(result_df)
+        predicted_index = classes.index(prediction)
 
-benign = sum(
-    result_df["Status"] == "BENIGN"
-=======
-    matching_rows = df[
-        df["URL"] == url
-    ]
-
-
-    browsers = (
-        matching_rows["Browser"]
-        .dropna()
-        .astype(str)
-        .unique()
-        .tolist()
-        if "Browser" in matching_rows.columns
-        else []
-    )
-
-
-    visit_times = (
-        matching_rows["Visit Time"]
-        .dropna()
-        .astype(str)
-        .tolist()
-        if "Visit Time" in matching_rows.columns
-        else []
-    )
-
-
-    results.append(
-        {
-            "Browser": ", ".join(
-                browsers
-            ),
-
+        results.append({
+            "Browser": ", ".join(browser_names) or "Unknown",
             "URL": url,
-
             "Status": status,
-
-            "Confidence": round(
-                confidence * 100,
-                2
+            "Confidence": round(float(probs[predicted_index]) * 100, 2),
+            "Phishing Probability": round(
+                float(probs[phishing_index]) * 100, 2
             ),
+            "Visit Time": visit_times[0] if visit_times else ""
+        })
 
-            "Visit Time": (
-                visit_times[0]
-                if visit_times
-                else ""
-            )
-        }
-    )
+    result_df = pd.DataFrame(results)
+    result_df.to_csv(OUTPUT_PATH, index=False)
 
-
-# ==========================================================
-# SAVE RESULTS
-# ==========================================================
-
-result_df = pd.DataFrame(
-    results
-)
-
-result_df.to_csv(
-    OUTPUT_FILE,
-    index=False
-)
+    print(f"URLs analyzed: {len(result_df)}")
+    print(f"Phishing URLs: {(result_df['Status'] == 'PHISHING').sum()}")
+    print(f"Benign URLs: {(result_df['Status'] == 'BENIGN').sum()}")
+    print(f"Results saved to: {OUTPUT_PATH}")
+    print("Browser AI analysis completed.")
 
 
-# ==========================================================
-# SUMMARY
-# ==========================================================
-
-total = len(
-    result_df
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-)
-
-phishing = int(
-    (
-        result_df["Status"]
-        == "PHISHING"
-    ).sum()
-)
-
-<<<<<<< HEAD
-
-print("\n======================================")
-print("V3 ANALYSIS SUMMARY")
-print("======================================")
-
-print(
-    f"Total URLs analyzed: {total}"
-)
-
-print(
-    f"Benign URLs: {benign}"
-=======
-benign = int(
-    (
-        result_df["Status"]
-        == "BENIGN"
-    ).sum()
-)
-
-
-print("\n======================================")
-print("       AI ANALYSIS SUMMARY")
-print("======================================")
-
-print(
-    f"Total URLs: {total}"
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-)
-
-print(
-    f"Phishing URLs: {phishing}"
-)
-
-<<<<<<< HEAD
-
-# --------------------------------------------------
-# RISK LEVEL
-# --------------------------------------------------
-
-if phishing == 0:
-
-    risk_level = "LOW"
-
-elif phishing <= 3:
-
-    risk_level = "MEDIUM"
-
-else:
-
-    risk_level = "HIGH"
-
-
-print(
-    f"Overall Browser Risk Level: {risk_level}"
-)
-
-
-# --------------------------------------------------
-# FINISH
-# --------------------------------------------------
-
-print("\n======================================")
-print("BROWSER ANALYSIS COMPLETED")
-print("======================================")
-
-print(
-    "\nResults saved to:"
-)
-
-print(
-    OUTPUT_PATH
-=======
-print(
-    f"Benign URLs: {benign}"
-)
-
-print(
-    f"\nResults saved to:"
-)
-
-print(
-    OUTPUT_FILE
-)
-
-print(
-    "\nAI phishing analysis completed!"
->>>>>>> 99d42bb (Update browser forensic phishing analysis)
-)
+if __name__ == "__main__":
+    main()
