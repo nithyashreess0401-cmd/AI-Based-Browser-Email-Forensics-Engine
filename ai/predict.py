@@ -1,118 +1,60 @@
+```python
 import joblib
 import pandas as pd
-import os
+from pathlib import Path
 
-print("=" * 60)
-print("AI-BASED BROWSER AND EMAIL FORENSICS ENGINE")
-print("STEP 4 - AI PREDICTION")
-print("=" * 60)
+ROOT = Path(__file__).resolve().parent.parent
+MODEL_PATH = ROOT / "models" / "phishing_model.pkl"
+SCALER_PATH = ROOT / "models" / "scaler.pkl"
+FEATURES_PATH = ROOT / "models" / "feature_names.pkl"
 
-# --------------------------------------------------
-# Load trained AI model
-# --------------------------------------------------
+model = joblib.load(MODEL_PATH)
+scaler = joblib.load(SCALER_PATH)
+features = joblib.load(FEATURES_PATH)
 
-model_path = "models/phishing_model.pkl"
-scaler_path = "models/scaler.pkl"
+print("AI-Based Phishing URL Prediction")
 
-if not os.path.exists(model_path):
-    print("\nERROR: Trained model not found!")
-    print("Run Step 3 first.")
-    exit()
+url = input("Enter URL: ").strip()
 
-model = joblib.load(model_path)
-scaler = joblib.load(scaler_path)
+if not url:
+    print("Please enter a valid URL.")
+    raise SystemExit
 
-print("\nAI model loaded successfully!")
+from urllib.parse import urlparse
+import re
 
+parsed = urlparse(url if "://" in url else "https://" + url)
+domain = parsed.netloc
+path = parsed.path
 
-# --------------------------------------------------
-# New evidence
-# --------------------------------------------------
-# This is temporary test data.
-# Later, Member 1/2 will provide these values.
-
-sample = {
-    "url_length": 54,
-    "valid_url": 1,
-    "at_symbol": 0,
-    "sensitive_words_count": 2,
-    "path_length": 15,
-    "isHttps": 1,
-    "nb_dots": 2,
-    "nb_hyphens": 1,
-    "nb_and": 0,
-    "nb_or": 0,
-    "nb_www": 1,
-    "nb_com": 1,
-    "nb_underscore": 0
-}
-
-
-# --------------------------------------------------
-# Convert input into DataFrame
-# --------------------------------------------------
-
-input_data = pd.DataFrame([sample])
-
-print("\nNew evidence received.")
-
-# Make sure feature order is correct
-feature_order = [
-    "url_length",
-    "valid_url",
-    "at_symbol",
-    "sensitive_words_count",
-    "path_length",
-    "isHttps",
-    "nb_dots",
-    "nb_hyphens",
-    "nb_and",
-    "nb_or",
-    "nb_www",
-    "nb_com",
-    "nb_underscore"
+suspicious_words = [
+    "login", "verify", "update", "secure",
+    "account", "bank", "password", "confirm"
 ]
 
-input_data = input_data[feature_order]
+data = {
+    "url_length": len(url),
+    "valid_url": int(bool(domain and "." in domain)),
+    "at_symbol": int("@" in url),
+    "sensitive_words_count": sum(
+        word in url.lower() for word in suspicious_words
+    ),
+    "path_length": len(path),
+    "isHttps": int(url.lower().startswith("https://")),
+    "nb_dots": url.count("."),
+    "nb_hyphens": url.count("-"),
+    "nb_and": url.count("&"),
+    "nb_or": url.count("|"),
+    "nb_www": url.lower().count("www"),
+    "nb_com": url.lower().count(".com"),
+    "nb_underscore": url.count("_"),
+}
 
+X = pd.DataFrame([[data[name] for name in features]], columns=features)
+X_scaled = scaler.transform(X)
 
-# --------------------------------------------------
-# Apply same scaling used during training
-# --------------------------------------------------
+prediction = model.predict(X_scaled)[0]
 
-input_scaled = scaler.transform(input_data)
-
-
-# --------------------------------------------------
-# AI Prediction
-# --------------------------------------------------
-
-prediction = model.predict(input_scaled)[0]
-
-probabilities = model.predict_proba(input_scaled)[0]
-
-safe_probability = probabilities[0]
-phishing_probability = probabilities[1]
-
-confidence = max(probabilities) * 100
-
-
-# --------------------------------------------------
-# Display result
-# --------------------------------------------------
-
-print("\n" + "=" * 60)
-print("AI INVESTIGATION RESULT")
-print("=" * 60)
-
-if prediction == 1:
-    result = "PHISHING"
-else:
-    result = "LEGITIMATE"
-
-print(f"\nPrediction          : {result}")
-print(f"Confidence          : {confidence:.2f}%")
-print(f"Legitimate Probability : {safe_probability * 100:.2f}%")
-print(f"Phishing Probability   : {phishing_probability * 100:.2f}%")
-
-print("\nSTEP 4 COMPLETED!")
+print("Model prediction:", prediction)
+print("⚠️ Verify the target-label mapping before interpreting this as phishing or legitimate.")
+```
