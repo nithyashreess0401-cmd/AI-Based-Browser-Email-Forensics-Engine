@@ -2,25 +2,11 @@ import os
 import sys
 import subprocess
 from datetime import date, timedelta
+from urllib.parse import urlparse
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.units import mm
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    PageBreak,
-    Preformatted,
-)
-from xml.sax.saxutils import escape
 
 
 # ============================================================
@@ -28,93 +14,54 @@ from xml.sax.saxutils import escape
 # ============================================================
 
 st.set_page_config(
-    page_title="Browser Forensics",
+    page_title="AI-Based Browser & Email Forensics",
     page_icon="🌐",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
-
 
 # ============================================================
 # PROJECT PATHS
 # ============================================================
 
-APP_DIR = os.path.dirname(
-    os.path.abspath(__file__)
-)
+APP_DIR = Path(__file__).resolve().parent
 
-BROWSER_DIR = os.path.join(
-    APP_DIR,
-    "browser"
-)
+BROWSER_DIR = APP_DIR / "browser"
+HISTORY_FILE = BROWSER_DIR / "history.csv"
 
-BROWSER_ANALYSIS_FILE = os.path.join(
-    BROWSER_DIR,
-    "browser_analysis.py"
-)
+BROWSER_SCRIPT = BROWSER_DIR / "browser_analysis.py"
+PHISHING_SCRIPT = BROWSER_DIR / "suspicious_urls.py"
 
-HISTORY_FILE = os.path.join(
-    BROWSER_DIR,
-    "browser_history.csv"
-)
+BROWSER_OUTPUTS = [
+    BROWSER_DIR / "suspicious_urls_v3.csv",
+    BROWSER_DIR / "browser_forensics_final.csv",
+    APP_DIR / "browser_forensics_final.csv",
+]
 
-RESULT_FILE_BROWSER = os.path.join(
-    BROWSER_DIR,
-    "browser_forensics_final.csv"
-)
+EMAIL_DIR = APP_DIR / "email_forensics_project"
+EMAIL_MAIN = EMAIL_DIR / "main.py"
+EMAIL_INPUT_DIR = EMAIL_DIR / "emails"
+EMAIL_INPUT_FILE = EMAIL_INPUT_DIR / "gmail_message.eml"
+EMAIL_REPORT = EMAIL_DIR / "reports" / "forensic_report.txt"
 
-RESULT_FILE_ROOT = os.path.join(
-    APP_DIR,
-    "browser_forensics_final.csv"
-)
-
-# ============================================================
-# EMAIL FORENSICS PATHS
-# ============================================================
-
-EMAIL_PROJECT_DIR = os.path.join(
-    APP_DIR,
-    "email_forensics_project"
-)
-
-EMAIL_MAIN = os.path.join(
-    EMAIL_PROJECT_DIR,
-    "main.py"
-)
-
-EMAIL_REPORT = os.path.join(
-    EMAIL_PROJECT_DIR,
-    "reports",
-    "forensic_report.txt"
-)
-
-COMBINED_PDF = os.path.join(
-    APP_DIR,
-    "combined_forensic_report.pdf"
-)
+COMBINED_PDF = APP_DIR / "combined_forensic_report.pdf"
 
 
 # ============================================================
 # SESSION STATE
 # ============================================================
 
-if "analysis_complete" not in st.session_state:
-    st.session_state.analysis_complete = False
+DEFAULTS = {
+    "browser_results": None,
+    "browser_complete": False,
+    "email_report": "",
+    "email_complete": False,
+    "start_date": None,
+    "end_date": None,
+}
 
-if "browser_results" not in st.session_state:
-    st.session_state.browser_results = None
-
-if "analysis_start_date" not in st.session_state:
-    st.session_state.analysis_start_date = None
-
-if "analysis_end_date" not in st.session_state:
-    st.session_state.analysis_end_date = None
-
-if "email_completed" not in st.session_state:
-    st.session_state.email_completed = False
-
-if "email_report" not in st.session_state:
-    st.session_state.email_report = ""
+for key, value in DEFAULTS.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
 # ============================================================
@@ -126,228 +73,185 @@ try:
 except Exception:
     logged_in = False
 
-
 if not logged_in:
-
-    st.title("🔐 Browser Forensics")
-
-    st.markdown(
-        """
-        ## Sign in required
-
-        This Browser Forensics application requires
-        Google authentication.
-        """
-    )
-
-    st.button(
-        "🔵 Sign in with Google",
-        on_click=st.login,
-        use_container_width=True
-    )
+    st.title("🔐 Browser & Email Forensics")
 
     st.info(
-        "Sign in with your Google account to continue."
+        "Sign in with Google to access the forensic analysis dashboard."
     )
+
+    try:
+        st.button(
+            "🔵 Sign in with Google",
+            on_click=st.login,
+            use_container_width=True,
+        )
+    except Exception:
+        st.error(
+            "Google authentication is not configured correctly. "
+            "Check the Streamlit authentication settings."
+        )
 
     st.stop()
 
 
 # ============================================================
-# SIDEBAR
+# HEADER AND SIDEBAR
 # ============================================================
 
 with st.sidebar:
+    st.success("Google account authenticated")
 
-    st.success(
-        "✅ Google account authenticated"
+    st.write(
+        f"👤 {getattr(st.user, 'name', 'Google User')}"
     )
 
-    user_name = getattr(
-        st.user,
-        "name",
-        "Google User"
-    )
-
-    user_email = getattr(
-        st.user,
-        "email",
-        ""
-    )
-
-    st.markdown(
-        f"### 👤 {user_name}"
-    )
-
+    user_email = getattr(st.user, "email", "")
     if user_email:
         st.caption(user_email)
-
-    st.divider()
 
     st.button(
         "🚪 Sign out",
         on_click=st.logout,
-        use_container_width=True
+        use_container_width=True,
     )
 
     st.divider()
-
-    st.caption(
-        "AI-Based Browser Forensics"
-    )
-
-    st.caption(
-        "Multi-browser history + phishing URL analysis"
-    )
+    st.caption("AI-Based Digital Forensics Engine")
 
 
-# ============================================================
-# HEADER
-# ============================================================
-
-st.title(
-    "🌐 Browser Forensics"
-)
+st.title("🌐 AI-Based Browser & Email Forensics")
 
 st.write(
-    "Extract browser history and analyze visited URLs "
-    "for phishing and suspicious activity."
+    "Analyze browser-history records, identify potentially "
+    "phishing URLs, examine email evidence, and generate reports."
+)
+
+st.warning(
+    "Cloud applications cannot directly access browser history "
+    "stored on your personal computer. Upload exported browser "
+    "history as a CSV file to analyze it."
 )
 
 
 # ============================================================
-# FIND RESULT FILE
+# COMMON FUNCTIONS
 # ============================================================
 
-def find_result_file():
-
-    possible_files = [
-        RESULT_FILE_BROWSER,
-        RESULT_FILE_ROOT
-    ]
-
-    for file_path in possible_files:
-
-        if os.path.isfile(file_path):
-            return file_path
-
-    return None
-
-
-# ============================================================
-# NORMALIZE STATUS
-# ============================================================
-
-def normalize_status_column(df):
+def normalize_columns(df):
+    """Standardize common browser-history column names."""
 
     df = df.copy()
 
-    # --------------------------------------------------------
-    # Find existing status column
-    # --------------------------------------------------------
+    rename_map = {}
+
+    for column in df.columns:
+        cleaned = str(column).strip().lower()
+
+        if cleaned in ["url", "website", "web address", "link"]:
+            rename_map[column] = "URL"
+
+        elif cleaned in [
+            "visit time",
+            "timestamp",
+            "visit date",
+            "date",
+            "last visit time",
+        ]:
+            rename_map[column] = "Visit Time"
+
+        elif cleaned in ["title", "page title", "website title"]:
+            rename_map[column] = "Title"
+
+        elif cleaned in ["browser", "browser name"]:
+            rename_map[column] = "Browser"
+
+    df = df.rename(columns=rename_map)
+
+    return df
+
+
+def normalize_status_column(df):
+    """Standardize prediction labels."""
+
+    df = df.copy()
 
     if "Status" not in df.columns:
-
-        possible_columns = [
+        for column in [
             "Prediction",
             "Result",
-            "Label",
             "Classification",
-            "Risk",
-            "Verdict"
-        ]
-
-        for column in possible_columns:
-
+            "Label",
+            "Verdict",
+        ]:
             if column in df.columns:
-
-                df["Status"] = (
-                    df[column]
-                    .astype(str)
-                    .str.strip()
-                    .str.upper()
-                )
-
+                df["Status"] = df[column]
                 break
 
-    # --------------------------------------------------------
-    # If no status exists
-    # --------------------------------------------------------
-
     if "Status" not in df.columns:
-
         df["Status"] = "UNKNOWN"
 
-    # --------------------------------------------------------
-    # Normalize values
-    # --------------------------------------------------------
+    status_map = {
+        "PHISH": "PHISHING",
+        "MALICIOUS": "PHISHING",
+        "MALWARE": "PHISHING",
+        "UNSAFE": "PHISHING",
+        "NOT SAFE": "PHISHING",
+        "LEGITIMATE": "BENIGN",
+        "SAFE": "BENIGN",
+        "NORMAL": "BENIGN",
+        "RISKY": "SUSPICIOUS",
+        "WARNING": "SUSPICIOUS",
+    }
 
     df["Status"] = (
         df["Status"]
         .astype(str)
         .str.strip()
         .str.upper()
-    )
-
-    df["Status"] = df["Status"].replace(
-        {
-            "NOT SAFE": "PHISHING",
-            "UNSAFE": "PHISHING",
-            "MALICIOUS": "PHISHING",
-            "MALWARE": "PHISHING",
-            "PHISH": "PHISHING",
-
-            "SAFE": "BENIGN",
-            "LEGITIMATE": "BENIGN",
-            "NORMAL": "BENIGN",
-
-            "RISKY": "SUSPICIOUS",
-            "WARNING": "SUSPICIOUS"
-        }
+        .replace(status_map)
     )
 
     return df
 
 
 # ============================================================
-# LOCAL URL RISK ANALYSIS
-#
-# Used only when browser_analysis.py does not create
-# suspicious_urls_v3.csv.
+# FALLBACK URL ANALYSIS
 # ============================================================
 
 def local_url_analysis(history_df):
+    """
+    Basic URL-risk heuristic used only when the existing
+    model pipeline does not generate a usable output.
 
-    df = history_df.copy()
+    This is NOT an ML-model prediction.
+    """
+
+    df = normalize_columns(history_df)
 
     if "URL" not in df.columns:
-
-        return pd.DataFrame()
+        raise ValueError(
+            "The uploaded CSV must contain a URL column."
+        )
 
     results = []
 
     suspicious_words = [
         "login",
         "verify",
-        "verification",
         "account",
-        "secure",
-        "security",
-        "update",
         "password",
         "signin",
-        "sign-in",
         "wallet",
         "bank",
         "confirm",
         "credential",
-        "unlock",
         "suspended",
+        "payment",
         "recover",
-        "payment"
     ]
 
-    suspicious_domains = [
+    suspicious_tlds = [
         ".tk",
         ".ml",
         ".ga",
@@ -357,183 +261,78 @@ def local_url_analysis(history_df):
         ".xyz",
         ".click",
         ".work",
-        ".zip",
-        ".mov"
     ]
 
     for _, row in df.iterrows():
+        url = str(row.get("URL", "")).strip()
 
-        url = str(
-            row.get("URL", "")
-        ).strip()
-
-        lower_url = url.lower()
+        if not url or url.lower() == "nan":
+            continue
 
         score = 0
         reasons = []
 
-        # ----------------------------------------------------
-        # HTTPS
-        # ----------------------------------------------------
+        parsed = urlparse(
+            url if "://" in url else "http://" + url
+        )
+
+        host = parsed.hostname or ""
+        lower_url = url.lower()
 
         if lower_url.startswith("http://"):
+            score += 10
+            reasons.append("Uses HTTP")
 
-            score += 15
+        if "@" in parsed.netloc:
+            score += 25
+            reasons.append("Contains @ in the URL authority")
 
-            reasons.append(
-                "Uses HTTP instead of HTTPS"
-            )
+        try:
+            import ipaddress
+            ipaddress.ip_address(host)
+            score += 30
+            reasons.append("Uses an IP address as the host")
+        except ValueError:
+            pass
 
-        # ----------------------------------------------------
-        # IP address
-        # ----------------------------------------------------
-
-        if "://" in lower_url:
-
-            host_part = (
-                lower_url
-                .split("://", 1)[1]
-                .split("/", 1)[0]
-            )
-
-            host_only = host_part.split(":")[0]
-
-            parts = host_only.split(".")
-
-            if (
-                len(parts) == 4
-                and all(
-                    part.isdigit()
-                    for part in parts
-                )
-            ):
-
-                score += 30
-
-                reasons.append(
-                    "Uses an IP address instead of a domain"
-                )
-
-        # ----------------------------------------------------
-        # Suspicious words
-        # ----------------------------------------------------
-
-        found_words = []
-
-        for word in suspicious_words:
-
-            if word in lower_url:
-
-                found_words.append(word)
+        found_words = [
+            word for word in suspicious_words
+            if word in lower_url
+        ]
 
         if found_words:
-
-            score += min(
-                30,
-                len(found_words) * 8
-            )
-
+            score += min(30, len(found_words) * 8)
             reasons.append(
-                "Contains security/account-related keywords: "
-                + ", ".join(found_words[:5])
+                "Suspicious keywords: " + ", ".join(found_words[:5])
             )
 
-        # ----------------------------------------------------
-        # Suspicious TLD
-        # ----------------------------------------------------
-
-        for tld in suspicious_domains:
-
-            if tld in lower_url:
-
-                score += 20
-
-                reasons.append(
-                    f"Uses a higher-risk domain ending: {tld}"
-                )
-
-                break
-
-        # ----------------------------------------------------
-        # Excessive URL length
-        # ----------------------------------------------------
+        if any(host.endswith(tld) for tld in suspicious_tlds):
+            score += 15
+            reasons.append("Potentially risky domain ending")
 
         if len(url) > 180:
+            score += 10
+            reasons.append("Unusually long URL")
 
-            score += 15
-
-            reasons.append(
-                "Unusually long URL"
-            )
-
-        # ----------------------------------------------------
-        # @ symbol
-        # ----------------------------------------------------
-
-        if "@" in lower_url:
-
-            score += 25
-
-            reasons.append(
-                "Contains @ symbol"
-            )
-
-        # ----------------------------------------------------
-        # Too many subdomains
-        # ----------------------------------------------------
-
-        if "://" in lower_url:
-
-            host = (
-                lower_url
-                .split("://", 1)[1]
-                .split("/", 1)[0]
-                .split(":")[0]
-            )
-
-            dot_count = host.count(".")
-
-            if dot_count >= 4:
-
-                score += 15
-
-                reasons.append(
-                    "Contains many subdomains"
-                )
-
-        # ----------------------------------------------------
-        # Final classification
-        # ----------------------------------------------------
+        if host.count(".") >= 4:
+            score += 10
+            reasons.append("Many subdomains")
 
         if score >= 50:
-
             status = "PHISHING"
-
         elif score >= 20:
-
             status = "SUSPICIOUS"
-
         else:
-
             status = "BENIGN"
 
         result = row.to_dict()
-
         result["Status"] = status
-
-        result["Risk Score"] = score
-
-        if reasons:
-
-            result["Analysis"] = "; ".join(
-                reasons
-            )
-
-        else:
-
-            result["Analysis"] = (
-                "No significant URL risk indicators detected"
-            )
+        result["Risk Score"] = min(score, 100)
+        result["Analysis"] = (
+            "; ".join(reasons)
+            if reasons
+            else "No significant URL risk indicators detected"
+        )
 
         results.append(result)
 
@@ -541,1490 +340,112 @@ def local_url_analysis(history_df):
 
 
 # ============================================================
-# CALCULATE STATISTICS
+# DATE FILTERING
 # ============================================================
 
-def calculate_statistics(df):
+def filter_dates(df, start_date, end_date):
+    """Filter history records by visit date when available."""
 
-    if df.empty:
+    df = normalize_columns(df)
 
-        return (
-            0,
-            0,
-            0,
-            0,
-            "LOW"
+    if "Visit Time" not in df.columns:
+        return df
+
+    parsed_dates = pd.to_datetime(
+        df["Visit Time"],
+        errors="coerce",
+        utc=True,
+    )
+
+    start = pd.Timestamp(start_date, tz="UTC")
+    end = pd.Timestamp(
+        end_date + timedelta(days=1),
+        tz="UTC",
+    )
+
+    mask = (
+        (parsed_dates >= start)
+        & (parsed_dates < end)
+    )
+
+    filtered = df.loc[mask].copy()
+
+    # Do not silently lose all data when date formats differ.
+    if filtered.empty and not df.empty:
+        st.warning(
+            "No records matched the selected dates. "
+            "Check the CSV's Visit Time format. "
+            "The analysis will use all uploaded records."
         )
+        return df
 
-    status = (
-        df["Status"]
-        .astype(str)
-        .str.upper()
-        .str.strip()
-    )
-
-    total = len(df)
-
-    phishing = int(
-        (status == "PHISHING").sum()
-    )
-
-    benign = int(
-        (status == "BENIGN").sum()
-    )
-
-    suspicious = int(
-        status.isin(
-            [
-                "SUSPICIOUS",
-                "UNKNOWN"
-            ]
-        ).sum()
-    )
-
-    if phishing >= 5:
-
-        risk = "HIGH"
-
-    elif phishing >= 1:
-
-        risk = "MEDIUM"
-
-    elif suspicious >= 5:
-
-        risk = "MEDIUM"
-
-    else:
-
-        risk = "LOW"
-
-    return (
-        total,
-        phishing,
-        benign,
-        suspicious,
-        risk
-    )
+    return filtered
 
 
 # ============================================================
-# RUN BROWSER ANALYSIS
+# RUN EXISTING BROWSER MODEL PIPELINE
 # ============================================================
 
-def run_browser_analysis(
-    start_date,
-    end_date
-):
-
-    env = os.environ.copy()
-
-    env[
-        "INVESTIGATION_START_DATE"
-    ] = str(start_date)
-
-    env[
-        "INVESTIGATION_END_DATE"
-    ] = str(end_date)
-
-    env[
-        "PYTHONUNBUFFERED"
-    ] = "1"
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-u",
-            BROWSER_ANALYSIS_FILE
-        ],
-        cwd=BROWSER_DIR,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=env
-    )
-
-    return result
-
-
-# ============================================================
-# RUN EMAIL FORENSICS
-# ============================================================
-
-def run_email_forensics():
-    """Run the existing email-forensics pipeline and load its report."""
-
-    if not os.path.isdir(EMAIL_PROJECT_DIR):
-        st.error("❌ Email forensics folder was not found.")
-        st.code(EMAIL_PROJECT_DIR)
-        return False
-
-    if not os.path.exists(EMAIL_MAIN):
-        st.error("❌ Email main.py was not found.")
-        st.code(EMAIL_MAIN)
-        return False
-
-    # Remove the previous report so a failed run cannot display stale data.
-    if os.path.exists(EMAIL_REPORT):
-        try:
-            os.remove(EMAIL_REPORT)
-        except Exception as error:
-            st.warning("Could not remove the previous email forensic report.")
-            st.exception(error)
-
-    try:
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-u",
-                EMAIL_MAIN,
-            ],
-            cwd=EMAIL_PROJECT_DIR,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-
-        if result.stdout:
-            with st.expander("📧 Email Forensics Console Output", expanded=True):
-                st.code(result.stdout)
-
-        if result.stderr:
-            with st.expander("⚠️ Email Forensics Error Output", expanded=True):
-                st.code(result.stderr)
-
-        if result.returncode != 0:
-            st.error("❌ Email Forensics failed.")
-            st.error(f"Return code: {result.returncode}")
-            return False
-
-        if not os.path.exists(EMAIL_REPORT):
-            st.error("❌ Email analysis finished, but forensic_report.txt was not generated.")
-            st.code(EMAIL_REPORT)
-            return False
-
-        with open(EMAIL_REPORT, "r", encoding="utf-8", errors="replace") as file:
-            report = file.read()
-
-        if not report.strip():
-            st.error("❌ Email forensic report is empty.")
-            return False
-
-        st.session_state.email_report = report
-        st.session_state.email_completed = True
-        return True
-
-    except Exception as error:
-        st.error("❌ Could not run Email Forensics.")
-        st.exception(error)
-        return False
-
-
-# ============================================================
-# FORENSIC REPORT
-# ============================================================
-
-def create_report(
-    df,
-    start_date,
-    end_date,
-    total,
-    phishing,
-    benign,
-    suspicious,
-    risk
-):
-
-    report = []
-
-    report.append(
-        "============================================================"
-    )
-
-    report.append(
-        "             AI-BASED BROWSER FORENSIC REPORT"
-    )
-
-    report.append(
-        "============================================================"
-    )
-
-    report.append("")
-
-    report.append(
-        "INVESTIGATION INFORMATION"
-    )
-
-    report.append(
-        "------------------------------------------------------------"
-    )
-
-    report.append(
-        f"Investigation Start : {start_date}"
-    )
-
-    report.append(
-        f"Investigation End   : {end_date}"
-    )
-
-    report.append("")
-
-    report.append(
-        "BROWSER FORENSIC SUMMARY"
-    )
-
-    report.append(
-        "------------------------------------------------------------"
-    )
-
-    report.append(
-        f"Total URLs          : {total}"
-    )
-
-    report.append(
-        f"Phishing URLs       : {phishing}"
-    )
-
-    report.append(
-        f"Benign URLs         : {benign}"
-    )
-
-    report.append(
-        f"Suspicious URLs     : {suspicious}"
-    )
-
-    report.append(
-        f"Overall Risk        : {risk}"
-    )
-
-    report.append("")
-
-    report.append(
-        "URL ANALYSIS RESULTS"
-    )
-
-    report.append(
-        "------------------------------------------------------------"
-    )
-
-    if df.empty:
-
-        report.append(
-            "No browser records were found."
-        )
-
-    else:
-
-        for index, row in df.iterrows():
-
-            report.append(
-                f"Record              : {index + 1}"
-            )
-
-            report.append(
-                f"Browser             : "
-                f"{row.get('Browser', '')}"
-            )
-
-            report.append(
-                f"URL                 : "
-                f"{row.get('URL', '')}"
-            )
-
-            report.append(
-                f"Title               : "
-                f"{row.get('Title', '')}"
-            )
-
-            report.append(
-                f"Visit Time          : "
-                f"{row.get('Visit Time', '')}"
-            )
-
-            report.append(
-                f"Status              : "
-                f"{row.get('Status', '')}"
-            )
-
-            if "Confidence" in df.columns:
-
-                report.append(
-                    f"Confidence          : "
-                    f"{row.get('Confidence', '')}"
-                )
-
-            if "Risk Score" in df.columns:
-
-                report.append(
-                    f"Risk Score          : "
-                    f"{row.get('Risk Score', '')}"
-                )
-
-            if "Analysis" in df.columns:
-
-                report.append(
-                    f"Analysis            : "
-                    f"{row.get('Analysis', '')}"
-                )
-
-            report.append(
-                "------------------------------------------------------------"
-            )
-
-    report.append("")
-
-    report.append(
-        "End of Browser Forensic Report"
-    )
-
-    return "\n".join(report)
-
-
-
-# ============================================================
-# COMBINED PDF REPORT
-# ============================================================
-
-def generate_combined_pdf(
-    output_path,
-    browser_df=None,
-    browser_report="",
-    email_report="",
-    start_date_value=None,
-    end_date_value=None,
-):
+def run_existing_browser_pipeline():
     """
-    Generate one combined Browser + Email forensic PDF.
-
-    The PDF includes:
-      - investigation period
-      - browser statistics
-      - browser URL findings
-      - browser forensic report
-      - complete email forensic report
+    Attempt to run the existing project scripts.
+    Return a usable CSV DataFrame when one is generated.
     """
 
-    document = SimpleDocTemplate(
-        output_path,
-        pagesize=A4,
-        rightMargin=12 * mm,
-        leftMargin=12 * mm,
-        topMargin=12 * mm,
-        bottomMargin=12 * mm,
-        title="AI-Based Browser & Email Forensics Report",
-        author="AI-Based Browser & Email Forensics Engine",
-    )
+    scripts = []
 
-    styles = getSampleStyleSheet()
+    if BROWSER_SCRIPT.is_file():
+        scripts.append(BROWSER_SCRIPT)
 
-    title_style = ParagraphStyle(
-        "CombinedTitle",
-        parent=styles["Title"],
-        alignment=TA_CENTER,
-        fontSize=18,
-        leading=22,
-        spaceAfter=8,
-    )
+    if PHISHING_SCRIPT.is_file():
+        scripts.append(PHISHING_SCRIPT)
 
-    heading_style = ParagraphStyle(
-        "CombinedHeading",
-        parent=styles["Heading2"],
-        fontSize=13,
-        leading=16,
-        spaceBefore=8,
-        spaceAfter=8,
-    )
-
-    normal_style = ParagraphStyle(
-        "CombinedNormal",
-        parent=styles["BodyText"],
-        fontSize=9,
-        leading=12,
-        spaceAfter=5,
-    )
-
-    small_style = ParagraphStyle(
-        "CombinedSmall",
-        parent=styles["BodyText"],
-        fontSize=7,
-        leading=9,
-    )
-
-    story = []
-
-    story.append(
-        Paragraph(
-            "AI-Based Browser & Email Forensics Report",
-            title_style,
-        )
-    )
-
-    story.append(
-        Paragraph(
-            "Combined Digital Forensic Investigation",
-            normal_style,
-        )
-    )
-
-    if start_date_value is not None and end_date_value is not None:
-        story.append(
-            Paragraph(
-                f"<b>Investigation Period:</b> "
-                f"{escape(str(start_date_value))} to "
-                f"{escape(str(end_date_value))}",
-                normal_style,
-            )
-        )
-
-    story.append(Spacer(1, 8))
-
-    # ------------------------------------------------------------
-    # Browser section
-    # ------------------------------------------------------------
-    story.append(
-        Paragraph(
-            "1. Browser Forensics",
-            heading_style,
-        )
-    )
-
-    browser_available = (
-        browser_df is not None
-        and not browser_df.empty
-    )
-
-    if browser_available:
-        try:
-            browser_copy = normalize_status_column(
-                browser_df.copy()
-            )
-
-            total, phishing, benign, suspicious, risk = (
-                calculate_statistics(browser_copy)
-            )
-
-            summary_data = [
-                ["Metric", "Result"],
-                ["Total URLs", str(total)],
-                ["Phishing URLs", str(phishing)],
-                ["Benign URLs", str(benign)],
-                ["Suspicious / Unknown URLs", str(suspicious)],
-                ["Overall Browser Risk", str(risk)],
-            ]
-
-            summary_table = Table(
-                summary_data,
-                colWidths=[85 * mm, 75 * mm],
-                repeatRows=1,
-            )
-
-            summary_table.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                        ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                        ("FONTSIZE", (0, 0), (-1, -1), 8),
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                        ("TOPPADDING", (0, 0), (-1, -1), 5),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                    ]
-                )
-            )
-
-            story.append(summary_table)
-            story.append(Spacer(1, 10))
-
-            story.append(
-                Paragraph(
-                    "Browser URL Findings",
-                    styles["Heading3"],
-                )
-            )
-
-            preferred = [
-                "Browser",
-                "URL",
-                "Title",
-                "Status",
-                "Confidence",
-                "Risk Score",
-                "Risk Level",
-                "Analysis",
-            ]
-
-            columns = [
-                col for col in preferred
-                if col in browser_copy.columns
-            ]
-
-            if not columns:
-                columns = list(browser_copy.columns)[:5]
-
-            # Keep the PDF readable. The CSV remains the complete dataset.
-            display_df = browser_copy.head(100)
-
-            table_data = [
-                [escape(str(col)) for col in columns]
-            ]
-
-            for _, row in display_df.iterrows():
-                row_values = []
-                for col in columns:
-                    value = str(row.get(col, ""))
-                    if len(value) > 100:
-                        value = value[:100] + "..."
-                    row_values.append(
-                        Paragraph(
-                            escape(value),
-                            small_style,
-                        )
-                    )
-                table_data.append(row_values)
-
-            if len(columns) <= 3:
-                widths = [55 * mm] * len(columns)
-            else:
-                total_width = 186 * mm
-                widths = [total_width / len(columns)] * len(columns)
-
-            details_table = Table(
-                table_data,
-                colWidths=widths,
-                repeatRows=1,
-            )
-
-            details_table.setStyle(
-                TableStyle(
-                    [
-                        ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                        ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
-                        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                        ("FONTSIZE", (0, 0), (-1, -1), 6),
-                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                        ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                        ("TOPPADDING", (0, 0), (-1, -1), 3),
-                        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-                    ]
-                )
-            )
-
-            story.append(details_table)
-
-            if len(browser_copy) > 100:
-                story.append(
-                    Spacer(1, 5)
-                )
-                story.append(
-                    Paragraph(
-                        f"Showing the first 100 of {len(browser_copy)} "
-                        "browser records in the PDF. The complete dataset "
-                        "is available through the CSV download.",
-                        small_style,
-                    )
-                )
-
-            story.append(PageBreak())
-
-            story.append(
-                Paragraph(
-                    "Browser Forensic Report",
-                    heading_style,
-                )
-            )
-
-            browser_report_text = browser_report or create_report(
-                browser_copy,
-                start_date_value,
-                end_date_value,
-                total,
-                phishing,
-                benign,
-                suspicious,
-                risk,
-            )
-
-            for block in str(browser_report_text).split("\n"):
-                if block.strip():
-                    story.append(
-                        Preformatted(
-                            block,
-                            ParagraphStyle(
-                                "BrowserPre",
-                                fontName="Courier",
-                                fontSize=6.5,
-                                leading=8,
-                            ),
-                        )
-                    )
-
-        except Exception as browser_error:
-            story.append(
-                Paragraph(
-                    "<b>Browser report could not be formatted:</b> "
-                    + escape(str(browser_error)),
-                    normal_style,
-                )
-            )
-    else:
-        story.append(
-            Paragraph(
-                "Browser analysis was not completed in this session.",
-                normal_style,
-            )
-        )
-
-    story.append(PageBreak())
-
-    # ------------------------------------------------------------
-    # Email section
-    # ------------------------------------------------------------
-    story.append(
-        Paragraph(
-            "2. Email Forensics",
-            heading_style,
-        )
-    )
-
-    if email_report and str(email_report).strip():
-        story.append(
-            Paragraph(
-                "The following report was generated by the existing "
-                "Email Forensics pipeline.",
-                normal_style,
-            )
-        )
-
-        for block in str(email_report).split("\n"):
-            if block.strip():
-                story.append(
-                    Preformatted(
-                        block,
-                        ParagraphStyle(
-                            "EmailPre",
-                            fontName="Courier",
-                            fontSize=7,
-                            leading=9,
-                        ),
-                    )
-                )
-    else:
-        story.append(
-            Paragraph(
-                "Email forensics was not completed in this session.",
-                normal_style,
-            )
-        )
-
-    story.append(PageBreak())
-
-    # ------------------------------------------------------------
-    # Final combined status
-    # ------------------------------------------------------------
-    story.append(
-        Paragraph(
-            "3. Combined Investigation Status",
-            heading_style,
-        )
-    )
-
-    browser_status = (
-        "Completed"
-        if browser_available
-        else "Not completed"
-    )
-
-    email_status = (
-        "Completed"
-        if email_report and str(email_report).strip()
-        else "Not completed"
-    )
-
-    final_data = [
-        ["Module", "Status"],
-        ["Browser Forensics", browser_status],
-        ["Email Forensics", email_status],
-    ]
-
-    final_table = Table(
-        final_data,
-        colWidths=[85 * mm, 75 * mm],
-        repeatRows=1,
-    )
-
-    final_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 5),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-            ]
-        )
-    )
-
-    story.append(final_table)
-    story.append(Spacer(1, 12))
-    story.append(
-        Paragraph(
-            "Generated by the AI-Based Browser & Email Forensics Engine.",
-            normal_style,
-        )
-    )
-
-    document.build(story)
-
-    return output_path
-
-
-# ============================================================
-# INVESTIGATION PERIOD
-# ============================================================
-
-st.divider()
-
-st.header(
-    "📅 Investigation Period"
-)
-
-today = date.today()
-
-default_start = (
-    today - timedelta(days=7)
-)
-
-col1, col2 = st.columns(2)
-
-with col1:
-
-    start_date = st.date_input(
-        "Start Date",
-        value=default_start
-    )
-
-with col2:
-
-    end_date = st.date_input(
-        "End Date",
-        value=today
-    )
-
-
-# ============================================================
-# DATE VALIDATION
-# ============================================================
-
-if start_date > end_date:
-
-    st.error(
-        "❌ Start Date cannot be after End Date."
-    )
-
-    st.stop()
-
-
-# ============================================================
-# BROWSER ANALYSIS
-# ============================================================
-
-st.divider()
-
-st.header(
-    "🔎 Browser Analysis"
-)
-
-if st.button(
-    "🔎 Run Browser Analysis",
-    type="primary",
-    use_container_width=True
-):
-
-    st.session_state.analysis_complete = False
-
-    st.session_state.browser_results = None
-
-    st.session_state.analysis_start_date = (
-        start_date
-    )
-
-    st.session_state.analysis_end_date = (
-        end_date
-    )
-
-    # --------------------------------------------------------
-    # CHECK FILES
-    # --------------------------------------------------------
-
-    if not os.path.isdir(BROWSER_DIR):
-
-        st.error(
-            "❌ Browser folder was not found."
-        )
-
-        st.code(
-            BROWSER_DIR
-        )
-
-        st.stop()
-
-    if not os.path.isfile(
-        BROWSER_ANALYSIS_FILE
-    ):
-
-        st.error(
-            "❌ browser_analysis.py was not found."
-        )
-
-        st.code(
-            BROWSER_ANALYSIS_FILE
-        )
-
-        st.stop()
-
-    # --------------------------------------------------------
-    # REMOVE OLD RESULT
-    # --------------------------------------------------------
-
-    old_result = find_result_file()
-
-    if old_result:
-
-        try:
-            os.remove(old_result)
-        except Exception:
-            pass
-
-    # --------------------------------------------------------
-    # RUN
-    # --------------------------------------------------------
-
-    with st.spinner(
-        "🌐 Extracting browser history and analyzing URLs..."
-    ):
-
-        result = run_browser_analysis(
-            start_date,
-            end_date
-        )
-
-    # --------------------------------------------------------
-    # IMPORTANT:
-    #
-    # DO NOT immediately fail on return code 1.
-    #
-    # browser_analysis.py may return 1 because its trained
-    # model is missing while still successfully creating
-    # history.csv / suspicious_urls_v3.csv.
-    # --------------------------------------------------------
-
-    result_file = find_result_file()
-
-    history_exists = os.path.isfile(
-        HISTORY_FILE
-    )
-
-    # --------------------------------------------------------
-    # SHOW OUTPUT ONLY IF NEEDED
-    # --------------------------------------------------------
-
-    if result.stdout:
-
-        with st.expander(
-            "🌐 Browser Analysis Output",
-            expanded=False
-        ):
-
-            st.code(
-                result.stdout
-            )
-
-    # --------------------------------------------------------
-    # IF RESULT EXISTS, CONTINUE
-    # --------------------------------------------------------
-
-    if result_file:
-
-        try:
-
-            result_df = pd.read_csv(
-                result_file
-            )
-
-            result_df = normalize_status_column(
-                result_df
-            )
-
-            st.session_state.browser_results = (
-                result_df
-            )
-
-            st.session_state.analysis_complete = True
-
-            st.session_state.analysis_start_date = (
-                start_date
-            )
-
-            st.session_state.analysis_end_date = (
-                end_date
-            )
-
-            if history_exists:
-
-                st.success(
-                    "✅ Browser history extraction completed."
-                )
-
-            st.success(
-                "✅ Browser URL analysis completed."
-            )
-
-            # ------------------------------------------------
-            # Do not show the model error to the user if
-            # usable results were successfully generated.
-            # ------------------------------------------------
-
-        except Exception as error:
-
-            st.error(
-                "❌ The analysis result was created "
-                "but could not be read."
-            )
-
-            st.exception(error)
-
-            st.stop()
-
-    else:
-
-        # ----------------------------------------------------
-        # NO RESULT FILE
-        #
-        # Try local analysis directly from history.csv.
-        # ----------------------------------------------------
-
-        if history_exists:
-
+    for script in scripts:
+        # Delete old outputs so stale results are not reused.
+        for output in BROWSER_OUTPUTS:
             try:
+                if output.exists():
+                    output.unlink()
+            except OSError:
+                pass
 
-                history_df = pd.read_csv(
-                    HISTORY_FILE
-                )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-u", str(script)],
+                cwd=str(BROWSER_DIR),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=180,
+            )
 
-                # --------------------------------------------
-                # Filter selected investigation period
-                # --------------------------------------------
-
-                if "Visit Time" in history_df.columns:
-
-                    history_df["Parsed Time"] = (
-                        pd.to_datetime(
-                            history_df["Visit Time"],
-                            errors="coerce"
-                        )
-                    )
-
-                    start_timestamp = pd.Timestamp(
-                        start_date
-                    )
-
-                    end_timestamp = (
-                        pd.Timestamp(end_date)
-                        + pd.Timedelta(days=1)
-                    )
-
-                    filtered_df = history_df[
-                        (
-                            history_df["Parsed Time"]
-                            >= start_timestamp
-                        )
-                        &
-                        (
-                            history_df["Parsed Time"]
-                            < end_timestamp
-                        )
-                    ].copy()
-
-                    if filtered_df.empty:
-
-                        filtered_df = history_df.copy()
-
-                else:
-
-                    filtered_df = history_df.copy()
-
-                # --------------------------------------------
-                # Local URL analysis
-                # --------------------------------------------
-
-                fallback_df = local_url_analysis(
-                    filtered_df
-                )
-
-                if not fallback_df.empty:
-
-                    fallback_df = (
-                        normalize_status_column(
-                            fallback_df
-                        )
-                    )
-
-                    # ----------------------------------------
-                    # Save fallback result
-                    # ----------------------------------------
-
-                    fallback_df.to_csv(
-                        RESULT_FILE_BROWSER,
-                        index=False
-                    )
-
-                    st.session_state.browser_results = (
-                        fallback_df
-                    )
-
-                    st.session_state.analysis_complete = True
-
-                    st.session_state.analysis_start_date = (
-                        start_date
-                    )
-
-                    st.session_state.analysis_end_date = (
-                        end_date
-                    )
-
-                    st.success(
-                        "✅ Browser history extracted and "
-                        "local URL-risk analysis completed."
-                    )
-
-                else:
-
-                    st.error(
-                        "❌ Browser history was found, "
-                        "but no URL records were available."
-                    )
-
-                    st.stop()
-
-            except Exception as error:
-
-                st.error(
-                    "❌ Browser analysis could not be completed."
-                )
-
-                st.exception(error)
+            with st.expander(
+                f"Console output: {script.name}",
+                expanded=False,
+            ):
+                if result.stdout:
+                    st.code(result.stdout)
 
                 if result.stderr:
+                    st.code(result.stderr)
 
-                    with st.expander(
-                        "Technical Error Details",
-                        expanded=True
-                    ):
-
-                        st.code(
-                            result.stderr
-                        )
-
-                st.stop()
-
-        else:
-
-            st.error(
-                "❌ Browser analysis failed and no "
-                "history.csv was generated."
-            )
-
-            if result.stderr:
-
-                with st.expander(
-                    "Technical Error Details",
-                    expanded=True
-                ):
-
-                    st.code(
-                        result.stderr
-                    )
-
-            st.stop()
-
-
-# ============================================================
-# DISPLAY RESULTS
-# ============================================================
-
-if st.session_state.analysis_complete:
-
-    df = st.session_state.browser_results
-
-    if df is None:
-
-        st.warning(
-            "No analysis results available."
-        )
-
-        st.stop()
-
-    df = normalize_status_column(
-        df.copy()
-    )
-
-    # ========================================================
-    # STATISTICS
-    # ========================================================
-
-    (
-        total,
-        phishing,
-        benign,
-        suspicious,
-        risk
-    ) = calculate_statistics(
-        df
-    )
-
-    # ========================================================
-    # SUMMARY
-    # ========================================================
-
-    st.divider()
-
-    st.header(
-        "📊 Browser Forensic Summary"
-    )
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    c1.metric(
-        "🌐 Total URLs",
-        total
-    )
-
-    c2.metric(
-        "🔴 Phishing",
-        phishing
-    )
-
-    c3.metric(
-        "🟢 Benign",
-        benign
-    )
-
-    c4.metric(
-        "🟠 Suspicious",
-        suspicious
-    )
-
-    c5.metric(
-        "⚠️ Risk",
-        risk
-    )
-
-    st.info(
-        f"📅 Investigation period: "
-        f"{st.session_state.analysis_start_date} "
-        f"→ "
-        f"{st.session_state.analysis_end_date}"
-    )
-
-    # ========================================================
-    # RISK MESSAGE
-    # ========================================================
-
-    if risk == "HIGH":
-
-        st.error(
-            "🔴 HIGH RISK: Multiple phishing or suspicious URLs detected."
-        )
-
-    elif risk == "MEDIUM":
-
-        st.warning(
-            "🟠 MEDIUM RISK: Potentially harmful browser activity detected."
-        )
-
-    else:
-
-        st.success(
-            "🟢 LOW RISK: No significant phishing activity detected."
-        )
-
-    # ========================================================
-    # PHISHING URLS
-    # ========================================================
-
-    phishing_df = df[
-        df["Status"]
-        .astype(str)
-        .str.upper()
-        .str.strip()
-        == "PHISHING"
-    ]
-
-    st.divider()
-
-    st.header(
-        "🔴 Detected Phishing URLs"
-    )
-
-    if phishing_df.empty:
-
-        st.success(
-            "No phishing URLs detected."
-        )
-
-    else:
-
-        st.dataframe(
-            phishing_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-    # ========================================================
-    # SUSPICIOUS URLS
-    # ========================================================
-
-    suspicious_df = df[
-        df["Status"]
-        .astype(str)
-        .str.upper()
-        .str.strip()
-        .isin(
-            [
-                "SUSPICIOUS",
-                "UNKNOWN"
-            ]
-        )
-    ]
-
-    st.divider()
-
-    st.header(
-        "🟠 Suspicious URLs"
-    )
-
-    if suspicious_df.empty:
-
-        st.success(
-            "No suspicious URLs detected."
-        )
-
-    else:
-
-        st.dataframe(
-            suspicious_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-    # ========================================================
-    # DOWNLOAD CSV
-    # ========================================================
-
-    st.divider()
-
-    st.header(
-        "📥 Download Results"
-    )
-
-    csv_data = df.to_csv(
-        index=False
-    )
-
-    st.download_button(
-        label="⬇️ Download Browser Analysis CSV",
-        data=csv_data,
-        file_name="browser_forensic_results.csv",
-        mime="text/csv",
-        use_container_width=True
-    )
-
-    # ========================================================
-    # FORENSIC REPORT
-    # ========================================================
-
-    st.divider()
-
-    st.header(
-        "📄 Browser Forensic Report"
-    )
-
-    report_text = create_report(
-        df,
-        st.session_state.analysis_start_date,
-        st.session_state.analysis_end_date,
-        total,
-        phishing,
-        benign,
-        suspicious,
-        risk
-    )
-
-    st.text_area(
-        "Forensic Report",
-        report_text,
-        height=500
-    )
-
-    st.download_button(
-        label="⬇️ Download Browser Forensic Report",
-        data=report_text,
-        file_name="browser_forensic_report.txt",
-        mime="text/plain",
-        use_container_width=True
-    )
-
-
-# ============================================================
-# EMAIL FORENSICS
-# ============================================================
-
-st.divider()
-
-st.header(
-    "📧 Email Forensics"
-)
-
-st.write(
-    "Run the existing email-forensics pipeline and combine its results with the browser investigation."
-)
-
-if st.button(
-    "📧 Run Email Forensics",
-    type="primary",
-    use_container_width=True,
-):
-
-    st.session_state.email_completed = False
-    st.session_state.email_report = ""
-
-    if run_email_forensics():
-        st.success("✅ Email forensic analysis completed successfully.")
-
-if st.session_state.email_completed:
-
-    st.subheader("📄 Email Forensic Report")
-
-    st.text_area(
-        "Email Forensic Report",
-        st.session_state.email_report,
-        height=500,
-    )
-
-    st.download_button(
-        label="⬇️ Download Email Forensic Report",
-        data=st.session_state.email_report,
-        file_name="email_forensic_report.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
-
-    # --------------------------------------------------------
-    # COMBINED PDF
-    # --------------------------------------------------------
-    if st.session_state.analysis_complete:
-        st.divider()
-        st.subheader("📄 Combined Browser + Email Report")
-
-        if st.button(
-            "📄 Generate Combined PDF Report",
-            type="primary",
-            use_container_width=True,
-        ):
-            try:
-                with st.spinner(
-                    "Generating combined Browser + Email forensic PDF..."
-                ):
-                    browser_df_for_pdf = (
-                        st.session_state.browser_results.copy()
-                        if st.session_state.browser_results is not None
-                        else None
-                    )
-
-                    browser_report_for_pdf = ""
-
-                    if browser_df_for_pdf is not None and not browser_df_for_pdf.empty:
-                        browser_df_for_pdf = normalize_status_column(
-                            browser_df_for_pdf
-                        )
-
-                        (
-                            pdf_total,
-                            pdf_phishing,
-                            pdf_benign,
-                            pdf_suspicious,
-                            pdf_risk,
-                        ) = calculate_statistics(
-                            browser_df_for_pdf
-                        )
-
-                        browser_report_for_pdf = create_report(
-                            browser_df_for_pdf,
-                            st.session_state.analysis_start_date,
-                            st.session_state.analysis_end_date,
-                            pdf_total,
-                            pdf_phishing,
-                            pdf_benign,
-                            pdf_suspicious,
-                            pdf_risk,
-                        )
-
-                    generate_combined_pdf(
-                        COMBINED_PDF,
-                        browser_df_for_pdf,
-                        browser_report_for_pdf,
-                        st.session_state.email_report,
-                        st.session_state.analysis_start_date,
-                        st.session_state.analysis_end_date,
-                    )
-
-                with open(
-                    COMBINED_PDF,
-                    "rb",
-                ) as pdf_file:
-                    pdf_bytes = pdf_file.read()
-
-                st.success(
-                    "✅ Combined Browser + Email PDF generated successfully."
+                st.write(
+                    f"Exit code: {result.returncode}"
                 )
 
-                st.download_button(
-                    label="⬇️ Download Combined Forensic PDF",
-                    data=pdf_bytes,
-                    file_name="combined_forensic_report.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
+            for output in BROWSER_OUTPUTS:
+                if output.is_file():
+                    try:
+                        result_df = pd.read_csv(output)
 
-            except Exception as pdf_error:
-                st.error(
-                    "❌ Could not generate the combined forensic PDF."
-                )
-                st.exception(pdf_error)
+                        if (
+                            not result_df.empty
+                            and "URL" in normalize_columns(
+                                result_df
+                            ).columns
+                        ):
+                            return normalize_columns(result_df)
 
-    # Show the combined status when both investigations are complete.
-    if st.session_state.analysis_complete:
-        st.success(
-            "🔗 Browser + Email Forensics are both available in this investigation."
-        )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.divider()
-
-st.caption(
-    "🌐 AI-Based Browser Forensics Engine | "
-    "Google authenticated | "
-    "Multi-browser history and phishing URL analysis"
-)
+                    except Exception:
+                        continue
