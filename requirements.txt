@@ -1,1 +1,5 @@
 
+streamlit
+reportlab
+pandas
+scikit-learn
