@@ -1,0 +1,49 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Forensic Engine</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      width: 320px;
+      padding: 16px;
+      color: #172033;
+    }
+    h2 { margin-top: 0; }
+    label { display: block; margin-top: 12px; }
+    input, button {
+      box-sizing: border-box;
+      width: 100%;
+      padding: 9px;
+      margin-top: 5px;
+    }
+    button {
+      margin-top: 16px;
+      cursor: pointer;
+      background: #174ea6;
+      color: white;
+      border: 0;
+      border-radius: 5px;
+    }
+    #status { white-space: pre-wrap; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h2>🛡️ Forensic Engine</h2>
+  <p>Select the period to investigate your Chrome history.</p>
+
+  <label for="startDate">Start date</label>
+  <input type="date" id="startDate" required>
+
+  <label for="endDate">End date</label>
+  <input type="date" id="endDate" required>
+
+  <button id="analyse">Retrieve Browser History</button>
+  <div id="status" role="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
