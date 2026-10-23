@@ -102,7 +102,7 @@ except Exception:
     logged_in = False
 
 if not logged_in:
-    st.title("🔐 Browser & Email Forensics")
+    st.title("Forensic Engine")
 
     st.write(
         "Sign in with Google to access the forensic dashboard."
@@ -165,7 +165,7 @@ with st.sidebar:
 # HEADER
 # ============================================================
 
-st.title("🌐 AI-Based Browser & Email Forensics")
+st.title("Forensic engine")
 
 st.write(
     "Analyze browser-history records, detect potentially "
