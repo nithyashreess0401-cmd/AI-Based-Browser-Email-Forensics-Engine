@@ -1,0 +1,16 @@
+
+{
+  "manifest_version": 3,
+  "name": "Forensic Engine Live Monitor",
+  "version": "1.0.0",
+  "description": "Monitors browser navigation for forensic analysis.",
+  "permissions": [
+    "webNavigation"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Forensic Engine"
+  }
+}
