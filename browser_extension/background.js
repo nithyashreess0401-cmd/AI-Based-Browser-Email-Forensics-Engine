@@ -1,77 +1,105 @@
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "GET_HISTORY") return;
+const APP_ORIGIN =
+  "https://ai-based-browser-email-forensics-engine-fudazumawynmgunkx3xxqd.streamlit.app";
 
-  (async () => {
-    try {
-      const startTime = Number(message.startTime);
-      const endTime = Number(message.endTime);
+function getHistory(startDate, endDate) {
+  return new Promise((resolve, reject) => {
+    const start = new Date(`${startDate}T00:00:00`).getTime();
+    const end = new Date(`${endDate}T23:59:59.999`).getTime();
 
-      if (
-        !Number.isFinite(startTime) ||
-        !Number.isFinite(endTime) ||
-        startTime >= endTime
-      ) {
-        throw new Error("Invalid investigation date range.");
-      }
-
-      // Search known URLs, then retrieve individual visits so an
-      // earlier visit is not missed just because the URL was revisited later.
-      const items = await chrome.history.search({
-        text: "",
-        startTime: 0,
-        endTime: Date.now(),
-        maxResults: 100000
-      });
-
-      const records = [];
-
-      for (const item of items) {
-        if (!item.url || !/^https?:\/\//i.test(item.url)) continue;
-
-        const visits = await chrome.history.getVisits({
-          url: item.url
-        });
-
-        for (const visit of visits) {
-          if (
-            visit.visitTime >= startTime &&
-            visit.visitTime < endTime
-          ) {
-            records.push({
-              url: item.url,
-              title: item.title || "",
-              visitTime: new Date(visit.visitTime).toISOString(),
-              transition: visit.transition || ""
-            });
-          }
-        }
-      }
-
-      records.sort(
-        (a, b) => new Date(a.visitTime) - new Date(b.visitTime)
-      );
-
-      sendResponse({ ok: true, records });
-    } catch (error) {
-      sendResponse({
-        ok: false,
-        error: error?.message || "Unknown history retrieval error."
-      });
+    if (
+      Number.isNaN(start) ||
+      Number.isNaN(end) ||
+      start > end
+    ) {
+      reject(new Error("Invalid investigation date range."));
+      return;
     }
-  })();
 
-  return true;
-});
+    chrome.history.search(
+      {
+        text: "",
+        startTime: start,
+        endTime: end,
+        maxResults: 0
+      },
+      (items) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
 
-// Continue observing new main-frame navigation events.
-chrome.webNavigation.onCompleted.addListener((details) => {
-  if (details.frameId !== 0) return;
-  if (!/^https?:\/\//i.test(details.url)) return;
+        const records = (items || []).map((item) => ({
+          URL: item.url || "",
+          Title: item.title || "",
+          "Visit Time": item.lastVisitTime
+            ? new Date(item.lastVisitTime).toISOString()
+            : "",
+          "Visit Count": item.visitCount || 0,
+          "Typed Count": item.typedCount || 0,
+          Browser: "Chrome"
+        }));
 
-  console.log(
-    "Forensic Engine observed URL:",
-    details.url,
-    new Date().toISOString()
-  );
-});
+        resolve(records);
+      }
+    );
+  });
+}
+
+chrome.runtime.onMessage.addListener(
+  (message, sender, sendResponse) => {
+    if (message?.type !== "GET_FORENSIC_HISTORY") {
+      return false;
+    }
+
+    getHistory(message.startDate, message.endDate)
+      .then((records) => {
+        sendResponse({
+          success: true,
+          count: records.length,
+          records
+        });
+      })
+      .catch((error) => {
+        sendResponse({
+          success: false,
+          error: error.message
+        });
+      });
+
+    return true;
+  }
+);
+
+chrome.runtime.onMessageExternal.addListener(
+  (message, sender, sendResponse) => {
+    if (sender.origin !== APP_ORIGIN) {
+      sendResponse({
+        success: false,
+        error: "Untrusted website origin."
+      });
+      return false;
+    }
+
+    if (message?.type !== "GET_FORENSIC_HISTORY") {
+      return false;
+    }
+
+    getHistory(message.startDate, message.endDate)
+      .then((records) => {
+        sendResponse({
+          success: true,
+          count: records.length,
+          records
+        });
+      })
+      .catch((error) => {
+        sendResponse({
+          success: false,
+          error: error.message
+        });
+      });
+
+    return true;
+  }
+);
