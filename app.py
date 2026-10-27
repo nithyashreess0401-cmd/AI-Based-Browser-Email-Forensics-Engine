@@ -1233,13 +1233,29 @@ if st.session_state.analysis_complete:
     st.divider()
     st.header("📊 Browser Forensic Summary")
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-
-    c1.metric("🌐 Total URLs", total)
-    c2.metric("🔴 Phishing", phishing)
-    c3.metric("🟢 Benign", benign)
-    c4.metric("🟠 Suspicious", suspicious)
-    c5.metric("⚠️ Risk", risk)
+    # Keep all five summary metrics in one horizontal row.
+    # On narrow screens, the row scrolls horizontally instead of stacking.
+    summary_items = [
+        ("🌐 Total URLs", total, "#2388c9"),
+        ("🔴 Phishing", phishing, "#dc3545"),
+        ("🟢 Benign", benign, "#20a464"),
+        ("🟠 Suspicious", suspicious, "#ed8733"),
+        ("⚠️ Risk", risk, "#8b78d6"),
+    ]
+    cards_html = "".join(
+        '<div style="flex:1 0 145px; min-width:145px; box-sizing:border-box; '
+        'padding:15px 14px; border:1px solid #303642; border-top:4px solid ' + color + '; '
+        'border-radius:12px; background:#151922;">'
+        '<div style="font-size:14px; color:#cbd5e1; margin-bottom:10px; white-space:nowrap;">' + str(label) + '</div>'
+        '<div style="font-size:29px; line-height:1.15; font-weight:650; color:#f8fafc;">' + str(value) + '</div>'
+        '</div>'
+        for label, value, color in summary_items
+    )
+    st.markdown(
+        '<div style="display:flex; flex-wrap:nowrap; gap:10px; width:100%; '
+        'overflow-x:auto; padding:2px 1px 12px 1px;">' + cards_html + '</div>',
+        unsafe_allow_html=True,
+    )
 
     st.info(
         f"Investigation period: "
