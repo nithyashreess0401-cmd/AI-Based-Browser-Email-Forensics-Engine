@@ -2,7 +2,6 @@ import os
 import sys
 import subprocess
 import ipaddress
-import json
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -694,102 +693,294 @@ def run_email_forensics():
 # GENERATE COMBINED PDF
 # ============================================================
 
-def generate_combined_pdf(
-    browser_df,
-    browser_report,
-    email_report,
+def generate_professional_pdf(
+    output_path,
+    report_type,
     start_date,
     end_date,
+    browser_df=None,
+    email_report="",
 ):
+    """Generate a consistently styled PDF for browser, email, or combined reports."""
     try:
         from reportlab.lib import colors
+        from reportlab.lib.enums import TA_LEFT, TA_CENTER
         from reportlab.lib.pagesizes import A4
-        from reportlab.lib.styles import (
-            getSampleStyleSheet,
-            ParagraphStyle,
-        )
-        from reportlab.lib.enums import TA_CENTER
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
         from reportlab.lib.units import mm
         from reportlab.platypus import (
-            SimpleDocTemplate,
-            Paragraph,
-            Spacer,
-            Preformatted,
+            SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+            PageBreak, KeepTogether
         )
         from xml.sax.saxutils import escape
-
     except ImportError as error:
         raise RuntimeError(
             "ReportLab is required. Add reportlab to requirements.txt."
         ) from error
 
-    document = SimpleDocTemplate(
-        str(COMBINED_PDF),
-        pagesize=A4,
-        rightMargin=12 * mm,
-        leftMargin=12 * mm,
-        topMargin=12 * mm,
-        bottomMargin=12 * mm,
-        title="Browser and Email Forensic Report",
+    navy = colors.HexColor("#123B68")
+    blue = colors.HexColor("#1676C5")
+    teal = colors.HexColor("#0F8B8D")
+    pale_blue = colors.HexColor("#EDF5FD")
+    pale_green = colors.HexColor("#EAF8F0")
+    pale_red = colors.HexColor("#FDEEEE")
+    pale_amber = colors.HexColor("#FFF7E5")
+    line = colors.HexColor("#C9DDF1")
+    muted = colors.HexColor("#52677D")
+    green = colors.HexColor("#16834A")
+    red = colors.HexColor("#B93832")
+    amber = colors.HexColor("#9A6500")
+
+    doc = SimpleDocTemplate(
+        str(output_path), pagesize=A4,
+        rightMargin=13*mm, leftMargin=13*mm,
+        topMargin=13*mm, bottomMargin=17*mm,
+        title=f"AI-Based Browser & Email Forensics - {report_type.title()} Report",
+        author="AI-Based Browser & Email Forensics Engine",
     )
-
-    styles = getSampleStyleSheet()
-
+    base = getSampleStyleSheet()
     title_style = ParagraphStyle(
-        "ForensicTitle",
-        parent=styles["Title"],
-        alignment=TA_CENTER,
-        fontSize=17,
-        leading=21,
-        spaceAfter=12,
+        "EngineTitle", parent=base["Title"], fontName="Helvetica-Bold",
+        fontSize=15, leading=18, textColor=navy, alignment=TA_LEFT,
+        spaceAfter=2,
     )
-
-    heading_style = styles["Heading2"]
-
-    report_style = ParagraphStyle(
-        "ReportText",
-        parent=styles["Code"],
-        fontName="Courier",
-        fontSize=7,
-        leading=9,
+    subtitle_style = ParagraphStyle(
+        "Subtitle", parent=base["Normal"], fontSize=8, leading=10,
+        textColor=muted, spaceAfter=0,
+    )
+    section_style = ParagraphStyle(
+        "Section", parent=base["Heading2"], fontName="Helvetica-Bold",
+        fontSize=11, leading=14, textColor=navy, spaceBefore=8, spaceAfter=6,
+    )
+    normal_style = ParagraphStyle(
+        "BodySmall", parent=base["BodyText"], fontSize=8, leading=11,
+        textColor=navy, spaceAfter=3,
+    )
+    tiny_style = ParagraphStyle(
+        "Tiny", parent=normal_style, fontSize=7, leading=9,
         wordWrap="CJK",
     )
+    table_head = ParagraphStyle(
+        "TableHead", parent=tiny_style, fontName="Helvetica-Bold",
+        textColor=colors.white,
+    )
+    table_cell = ParagraphStyle(
+        "TableCell", parent=tiny_style, textColor=navy,
+    )
+    story = []
 
-    story = [
-        Paragraph(
-            "AI-Based Browser & Email Forensics Report",
-            title_style,
-        ),
-        Paragraph(
-            "Investigation period: "
-            + escape(str(start_date))
-            + " to "
-            + escape(str(end_date)),
-            styles["Normal"],
-        ),
-        Spacer(1, 12),
-        Paragraph(
-            "1. Browser Forensics",
-            heading_style,
-        ),
-        Preformatted(
-            browser_report,
-            report_style,
-        ),
-        Spacer(1, 16),
-        Paragraph(
-            "2. Email Forensics",
-            heading_style,
-        ),
-        Preformatted(
-            email_report,
-            report_style,
-        ),
+    # Header: small shield mark and report title in the same row.
+    logo = Table([[Paragraph("&#9670;", ParagraphStyle(
+        "LogoMark", parent=title_style, fontSize=23, leading=25,
+        textColor=blue, alignment=TA_CENTER))]], colWidths=[17*mm], rowHeights=[17*mm])
+    logo.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), pale_blue),
+        ("BOX", (0,0), (-1,-1), 0.8, line),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("LEFTPADDING", (0,0), (-1,-1), 1),
+        ("RIGHTPADDING", (0,0), (-1,-1), 1),
+        ("TOPPADDING", (0,0), (-1,-1), 1),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 1),
+    ]))
+    header_text = [
+        Paragraph("AI-BASED BROWSER &amp; EMAIL<br/>FORENSIC ENGINE REPORT", title_style),
+        Paragraph("DIGITAL EVIDENCE&nbsp;&nbsp; | &nbsp;&nbsp;AI ANALYSIS&nbsp;&nbsp; | &nbsp;&nbsp;TRUSTED INSIGHTS", subtitle_style),
     ]
+    right_text = [
+        Paragraph(f"<b>{escape(report_type.title())} Forensics Report</b>", normal_style),
+        Paragraph("Investigate&nbsp; · &nbsp;Analyse&nbsp; · &nbsp;Report", subtitle_style),
+    ]
+    header = Table([[logo, header_text, right_text]], colWidths=[20*mm, 98*mm, 63*mm])
+    header.setStyle(TableStyle([
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("LEFTPADDING", (0,0), (-1,-1), 3),
+        ("RIGHTPADDING", (0,0), (-1,-1), 4),
+        ("TOPPADDING", (0,0), (-1,-1), 4),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+        ("LINEBELOW", (0,0), (-1,-1), 1, line),
+        ("LINEBEFORE", (2,0), (2,0), 1, blue),
+    ]))
+    story.extend([header, Spacer(1, 7*mm)])
 
-    document.build(story)
+    def section_heading(number, label):
+        return Paragraph(
+            f'<font color="#1676C5"><b>{number}</b></font>&nbsp;&nbsp;'
+            f'<font color="#123B68"><b>{escape(label.upper())}</b></font>',
+            section_style,
+        )
 
-    return COMBINED_PDF
+    df = browser_df.copy() if browser_df is not None else None
+    if df is not None and not df.empty:
+        df = normalize_status_column(df)
+        total, phishing, benign, suspicious, risk = calculate_statistics(df)
+    elif report_type.lower() == "email":
+        total = phishing = benign = suspicious = 0
+        risk = "REVIEW"
+    else:
+        total = phishing = benign = suspicious = 0
+        risk = "LOW"
+
+    story.append(section_heading("1", "Investigation Overview"))
+    if report_type.lower() == "email":
+        overview_metrics = [("EMAIL EVIDENCE", "Retrieved / analysed below"), ("INVESTIGATION PERIOD", f"{start_date} to {end_date}")]
+        metrics = [[Paragraph(f"<b>{escape(k)}</b><br/>{escape(str(v))}", normal_style) for k,v in overview_metrics]]
+        overview = Table(metrics, colWidths=[90*mm, 90*mm])
+        overview.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,-1), pale_blue),
+            ("BOX", (0,0), (-1,-1), 0.7, line),
+            ("INNERGRID", (0,0), (-1,-1), 0.5, line),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 8),
+            ("TOPPADDING", (0,0), (-1,-1), 8),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 8),
+        ]))
+        story.append(overview)
+    else:
+        metric_data = [
+            ("INVESTIGATION START", str(start_date), pale_blue, navy),
+            ("INVESTIGATION END", str(end_date), pale_blue, navy),
+            ("TOTAL URLS", str(total), pale_blue, blue),
+            ("PHISHING URLS", str(phishing), pale_red, red),
+            ("BENIGN URLS", str(benign), pale_green, green),
+            ("SUSPICIOUS URLS", str(suspicious), pale_amber, amber),
+            ("OVERALL RISK", str(risk), pale_green if risk == "LOW" else pale_amber, green if risk == "LOW" else amber),
+        ]
+        cells = []
+        for label, value, bg, fg in metric_data:
+            cells.append(Paragraph(
+                f'<font size="6" color="#52677D"><b>{escape(label)}</b></font><br/>'
+                f'<font size="12" color="{fg.hexval()}"><b>{escape(value)}</b></font>', normal_style
+            ))
+        overview = Table([cells[2:7]], colWidths=[36*mm] * 5)
+        overview.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (0,0), pale_blue),
+            ("BACKGROUND", (1,0), (1,0), pale_red),
+            ("BACKGROUND", (2,0), (2,0), pale_green),
+            ("BACKGROUND", (3,0), (3,0), pale_amber),
+            ("BACKGROUND", (4,0), (4,0), pale_green if risk == "LOW" else pale_amber),
+            ("BOX", (0,0), (-1,-1), 0.6, line),
+            ("INNERGRID", (0,0), (-1,-1), 0.5, line),
+            ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+            ("LEFTPADDING", (0,0), (-1,-1), 6),
+            ("RIGHTPADDING", (0,0), (-1,-1), 6),
+            ("TOPPADDING", (0,0), (-1,-1), 7),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+        ]))
+        # A compact date band above the evidence metrics.
+        dates = Table([[Paragraph(f"<b>Investigation Start:</b> {escape(str(start_date))}", normal_style),
+                        Paragraph(f"<b>Investigation End:</b> {escape(str(end_date))}", normal_style)]],
+                      colWidths=[90*mm, 90*mm])
+        dates.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,-1), pale_blue),
+                                   ("BOX", (0,0), (-1,-1), 0.6, line),
+                                   ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+                                   ("LEFTPADDING", (0,0), (-1,-1), 8),
+                                   ("TOPPADDING", (0,0), (-1,-1), 5),
+                                   ("BOTTOMPADDING", (0,0), (-1,-1), 5)]))
+        story.extend([dates, Spacer(1, 2*mm), overview])
+
+    if report_type.lower() in ("browser", "combined") and df is not None:
+        story.append(Spacer(1, 4*mm))
+        story.append(section_heading("2", "Evidence Records — Browser"))
+        headers = ["#", "URL", "Title", "Visit Time", "Classification", "Risk", "Analysis"]
+        data = [[Paragraph(h, table_head) for h in headers]]
+        for i, (_, row) in enumerate(df.iterrows(), start=1):
+            url = str(row.get("URL", "") or "Unavailable")
+            title = str(row.get("Title", "") or "Unavailable")
+            visit = str(row.get("Visit Time", "") or "Unavailable")
+            status = str(row.get("Status", "UNKNOWN") or "UNKNOWN").upper()
+            score = str(row.get("Risk Score", "Not provided") or "Not provided")
+            analysis = str(row.get("Analysis", "Not provided") or "Not provided")
+            data.append([
+                Paragraph(str(i), table_cell),
+                Paragraph(escape(url), tiny_style),
+                Paragraph(escape(title), tiny_style),
+                Paragraph(escape(visit), tiny_style),
+                Paragraph(escape(status), tiny_style),
+                Paragraph(escape(score), tiny_style),
+                Paragraph(escape(analysis), tiny_style),
+            ])
+        evidence = Table(data, repeatRows=1,
+                         colWidths=[7*mm, 48*mm, 25*mm, 21*mm, 22*mm, 13*mm, 34*mm])
+        evidence.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), navy),
+            ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+            ("GRID", (0,0), (-1,-1), 0.45, line),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("LEFTPADDING", (0,0), (-1,-1), 4),
+            ("RIGHTPADDING", (0,0), (-1,-1), 4),
+            ("TOPPADDING", (0,0), (-1,-1), 5),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 5),
+            ("ROWBACKGROUNDS", (0,1), (-1,-1), [colors.white, colors.HexColor("#F7FAFE")]),
+        ]))
+        story.append(evidence)
+
+    if report_type.lower() in ("email", "combined"):
+        story.append(Spacer(1, 4*mm))
+        story.append(section_heading("2" if report_type.lower() == "email" else "3", "Email Evidence & Analysis"))
+        if email_report and email_report.strip():
+            # Preserve the existing email analyzer output, but render it as readable paragraphs.
+            for line_text in email_report.splitlines():
+                clean = line_text.strip()
+                if not clean:
+                    story.append(Spacer(1, 1.5*mm))
+                elif set(clean) <= set("=-_"):
+                    story.append(Spacer(1, 1*mm))
+                else:
+                    story.append(Paragraph(escape(clean), normal_style))
+        else:
+            story.append(Paragraph("No email report content was supplied.", normal_style))
+
+    story.append(Spacer(1, 4*mm))
+    conclusion_number = "3" if report_type.lower() == "browser" else ("4" if report_type.lower() == "combined" else "3")
+    story.append(section_heading(conclusion_number, "Findings & Conclusion"))
+    findings = []
+    if df is not None and not df.empty:
+        findings.append(f"{total} browser URL record(s) were included in this report.")
+        findings.append(f"Classification counts: {phishing} phishing, {benign} benign, and {suspicious} suspicious/unknown.")
+        if "Visit Time" in df.columns and df["Visit Time"].astype(str).str.strip().isin(["", "NaT", "nan", "None"]).any():
+            findings.append("Some visit timestamps are unavailable in the collected evidence.")
+        if "Risk Score" in df.columns:
+            findings.append("Risk scores are reported as supplied by the analysis pipeline and should be interpreted separately from the classification label.")
+    if report_type.lower() == "email":
+        findings.append("Review the email findings and source evidence before drawing investigative conclusions.")
+    if not findings:
+        findings.append("No structured browser evidence was supplied. Review the email analysis above and verify conclusions against original evidence.")
+    findings.append("Automated results support investigation; they do not replace manual verification by an investigator.")
+    finding_paras = [Paragraph("• " + escape(item), normal_style) for item in findings]
+    conclusion = Table([[finding_paras]], colWidths=[180*mm])
+    conclusion.setStyle(TableStyle([
+        ("BACKGROUND", (0,0), (-1,-1), pale_blue),
+        ("BOX", (0,0), (-1,-1), 0.7, line),
+        ("LEFTPADDING", (0,0), (-1,-1), 8),
+        ("RIGHTPADDING", (0,0), (-1,-1), 8),
+        ("TOPPADDING", (0,0), (-1,-1), 7),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 7),
+    ]))
+    story.append(conclusion)
+
+    def draw_footer(canvas, document_obj):
+        canvas.saveState()
+        page_w, _ = A4
+        canvas.setStrokeColor(line)
+        canvas.setLineWidth(0.6)
+        canvas.line(13*mm, 12*mm, page_w-13*mm, 12*mm)
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(muted)
+        canvas.drawString(13*mm, 7*mm, "AI-Based Browser & Email Forensics Engine")
+        canvas.drawCentredString(page_w/2, 7*mm, f"Generated: {date.today().isoformat()}  |  Page {document_obj.page}")
+        canvas.drawRightString(page_w-13*mm, 7*mm, "For Investigative Use")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    return Path(output_path)
+
+
+def generate_combined_pdf(browser_df, browser_report, email_report, start_date, end_date):
+    """Backward-compatible wrapper for the combined branded PDF."""
+    return generate_professional_pdf(
+        COMBINED_PDF, "combined", start_date, end_date,
+        browser_df=browser_df, email_report=email_report,
+    )
 
 
 # ============================================================
@@ -830,50 +1021,15 @@ st.divider()
 st.header("🔎 Browser Analysis")
 
 st.write(
-    "Use the JSON evidence file downloaded by your Chrome extension, "
-    "or upload a browser-history CSV. The file must contain URL records "
-    "and should include visit timestamps for date filtering."
+    "Upload an exported browser-history CSV file. "
+    "The CSV should include a URL column and preferably a Visit Time column."
 )
 
 browser_upload = st.file_uploader(
-    "Upload Chrome Extension Evidence (JSON) or Browser History (CSV)",
-    type=["json", "csv"],
+    "Upload Browser History CSV",
+    type=["csv"],
     key="browser_history_upload",
 )
-
-
-def read_browser_evidence(uploaded_file):
-    """Read CSV or Chrome extension JSON evidence into a DataFrame."""
-    filename = (uploaded_file.name or "").lower()
-
-    if filename.endswith(".csv"):
-        return pd.read_csv(uploaded_file)
-
-    try:
-        payload = json.loads(uploaded_file.getvalue().decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError("The JSON evidence file is invalid.") from error
-
-    # Accept either a list of records or an object containing records/history.
-    if isinstance(payload, list):
-        records = payload
-    elif isinstance(payload, dict):
-        records = payload.get("records")
-        if records is None:
-            records = payload.get("history")
-        if records is None:
-            records = payload.get("data")
-        if records is None:
-            raise ValueError(
-                "JSON evidence must contain a 'records', 'history', or 'data' list."
-            )
-    else:
-        raise ValueError("Unsupported JSON evidence format.")
-
-    if not isinstance(records, list):
-        raise ValueError("The JSON evidence records must be a list.")
-
-    return pd.DataFrame(records)
 
 if st.button(
     "🔎 Run Browser Analysis",
@@ -886,11 +1042,10 @@ if st.button(
     try:
         if browser_upload is None:
             st.error(
-                "Upload the JSON evidence downloaded by your Chrome extension "
-                "or a browser-history CSV before running the analysis."
+                "Upload a browser-history CSV before running the analysis."
             )
         else:
-            uploaded_df = read_browser_evidence(browser_upload)
+            uploaded_df = pd.read_csv(browser_upload)
             uploaded_df = normalize_columns(uploaded_df)
 
             if "URL" not in uploaded_df.columns:
@@ -1052,9 +1207,7 @@ if st.button(
                         )
 
     except pd.errors.EmptyDataError:
-        st.error("The uploaded browser evidence file is empty.")
-    except ValueError as error:
-        st.error(str(error))
+        st.error("The uploaded CSV file is empty.")
 
     except Exception as error:
         st.error("Browser analysis failed.")
@@ -1172,13 +1325,24 @@ if st.session_state.analysis_complete:
         height=400,
     )
 
-    st.download_button(
-        "⬇️ Download Browser Forensic Report",
-        data=browser_report.encode("utf-8"),
-        file_name="browser_forensic_report.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
+    try:
+        browser_pdf_path = APP_DIR / "browser_forensic_report.pdf"
+        generate_professional_pdf(
+            browser_pdf_path, "browser",
+            st.session_state.analysis_start_date,
+            st.session_state.analysis_end_date,
+            browser_df=df,
+        )
+        st.download_button(
+            "⬇️ Download Professional Browser PDF",
+            data=browser_pdf_path.read_bytes(),
+            file_name="browser_forensic_report.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    except Exception as error:
+        st.error("Could not generate the browser PDF report.")
+        st.exception(error)
 
 
 # ============================================================
@@ -1250,13 +1414,23 @@ if st.session_state.email_completed:
         height=400,
     )
 
-    st.download_button(
-        "⬇️ Download Email Forensic Report",
-        data=st.session_state.email_report.encode("utf-8"),
-        file_name="email_forensic_report.txt",
-        mime="text/plain",
-        use_container_width=True,
-    )
+    try:
+        email_pdf_path = APP_DIR / "email_forensic_report.pdf"
+        generate_professional_pdf(
+            email_pdf_path, "email",
+            start_date, end_date,
+            email_report=st.session_state.email_report,
+        )
+        st.download_button(
+            "⬇️ Download Professional Email PDF",
+            data=email_pdf_path.read_bytes(),
+            file_name="email_forensic_report.pdf",
+            mime="application/pdf",
+            use_container_width=True,
+        )
+    except Exception as error:
+        st.error("Could not generate the email PDF report.")
+        st.exception(error)
 
 
 # ============================================================
