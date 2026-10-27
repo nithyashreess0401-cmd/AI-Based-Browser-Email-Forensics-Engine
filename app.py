@@ -2,6 +2,7 @@ import os
 import sys
 import subprocess
 import ipaddress
+import json
 from datetime import date, timedelta
 from pathlib import Path
 from urllib.parse import urlparse
@@ -829,15 +830,50 @@ st.divider()
 st.header("🔎 Browser Analysis")
 
 st.write(
-    "Upload an exported browser-history CSV file. "
-    "The CSV should include a URL column and preferably a Visit Time column."
+    "Use the JSON evidence file downloaded by your Chrome extension, "
+    "or upload a browser-history CSV. The file must contain URL records "
+    "and should include visit timestamps for date filtering."
 )
 
 browser_upload = st.file_uploader(
-    "Upload Browser History CSV",
-    type=["csv"],
+    "Upload Chrome Extension Evidence (JSON) or Browser History (CSV)",
+    type=["json", "csv"],
     key="browser_history_upload",
 )
+
+
+def read_browser_evidence(uploaded_file):
+    """Read CSV or Chrome extension JSON evidence into a DataFrame."""
+    filename = (uploaded_file.name or "").lower()
+
+    if filename.endswith(".csv"):
+        return pd.read_csv(uploaded_file)
+
+    try:
+        payload = json.loads(uploaded_file.getvalue().decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("The JSON evidence file is invalid.") from error
+
+    # Accept either a list of records or an object containing records/history.
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        records = payload.get("records")
+        if records is None:
+            records = payload.get("history")
+        if records is None:
+            records = payload.get("data")
+        if records is None:
+            raise ValueError(
+                "JSON evidence must contain a 'records', 'history', or 'data' list."
+            )
+    else:
+        raise ValueError("Unsupported JSON evidence format.")
+
+    if not isinstance(records, list):
+        raise ValueError("The JSON evidence records must be a list.")
+
+    return pd.DataFrame(records)
 
 if st.button(
     "🔎 Run Browser Analysis",
@@ -850,10 +886,11 @@ if st.button(
     try:
         if browser_upload is None:
             st.error(
-                "Upload a browser-history CSV before running the analysis."
+                "Upload the JSON evidence downloaded by your Chrome extension "
+                "or a browser-history CSV before running the analysis."
             )
         else:
-            uploaded_df = pd.read_csv(browser_upload)
+            uploaded_df = read_browser_evidence(browser_upload)
             uploaded_df = normalize_columns(uploaded_df)
 
             if "URL" not in uploaded_df.columns:
@@ -1015,7 +1052,9 @@ if st.button(
                         )
 
     except pd.errors.EmptyDataError:
-        st.error("The uploaded CSV file is empty.")
+        st.error("The uploaded browser evidence file is empty.")
+    except ValueError as error:
+        st.error(str(error))
 
     except Exception as error:
         st.error("Browser analysis failed.")
