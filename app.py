@@ -643,14 +643,8 @@ def run_email_forensics():
             timeout=180,
         )
 
-        if result.stdout:
-            with st.expander("Email console output"):
-                st.code(result.stdout)
-
-        if result.stderr:
-            with st.expander("Email technical details"):
-                st.code(result.stderr)
-
+        # Keep per-email subprocess logs hidden from the dashboard.
+        # The user receives only the consolidated final PDF.
         if result.returncode != 0:
             st.error(
                 "Email analysis failed. "
