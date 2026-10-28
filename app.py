@@ -1470,17 +1470,28 @@ def gmail_api_get(path, params=None):
     return response.json()
 
 
-def list_gmail_messages(start_date, end_date, max_results=25):
-    """List Gmail messages received during the selected investigation period."""
+def list_gmail_messages(start_date, end_date):
+    """List every Gmail message received during the selected date range."""
     query = (
         f"after:{start_date.strftime('%Y/%m/%d')} "
         f"before:{(end_date + timedelta(days=1)).strftime('%Y/%m/%d')}"
     )
-    listing = gmail_api_get("messages", {"q": query, "maxResults": max_results})
-    messages = listing.get("messages", [])
-    results = []
+    message_ids = []
+    page_token = None
 
-    for message in messages:
+    # Gmail returns at most 500 message IDs per page. Follow every page.
+    while True:
+        params = {"q": query, "maxResults": 500}
+        if page_token:
+            params["pageToken"] = page_token
+        listing = gmail_api_get("messages", params)
+        message_ids.extend(listing.get("messages", []))
+        page_token = listing.get("nextPageToken")
+        if not page_token:
+            break
+
+    results = []
+    for message in message_ids:
         metadata = gmail_api_get(
             "messages/" + message["id"],
             {"format": "metadata", "metadataHeaders": ["From", "To", "Subject", "Date"]},
@@ -1523,8 +1534,8 @@ handle_gmail_oauth_callback()
 st.divider()
 st.header("📧 Email Forensics")
 st.write(
-    "Connect your own Gmail account, choose an investigation period, and analyze a message "
-    "using read-only Gmail access. The selected message is passed to the existing email-forensics pipeline."
+    "Connect Gmail, select an investigation date range, and analyze every email "
+    "received during that period. The detailed results are provided as a downloadable PDF."
 )
 
 client_id, client_secret, redirect_uri = gmail_oauth_settings()
@@ -1535,107 +1546,102 @@ gmail_connected = bool(
 
 if not client_id or not client_secret or not redirect_uri:
     st.warning(
-        "Gmail direct access is not configured yet. The app needs a Google OAuth Web client "
-        "and three values in Streamlit Secrets before the Gmail connection button can work."
+        "Gmail direct access is not configured yet. Configure the Gmail OAuth values in Streamlit Secrets."
     )
+elif not gmail_connected:
+    authorization_url = gmail_authorization_url()
+    if authorization_url:
+        st.link_button(
+            "🔐 Connect Gmail (read-only)",
+            authorization_url,
+            use_container_width=True,
+        )
+    st.caption("Gmail access is read-only and separate from signing in to Forensic Engine.")
 else:
-    if not gmail_connected:
-        authorization_url = gmail_authorization_url()
-        if authorization_url:
-            st.link_button(
-                "🔐 Connect Gmail (read-only)",
-                authorization_url,
-                use_container_width=True,
-            )
-        st.caption("Google will ask you to authorize read-only access to Gmail. This is separate from signing in to Forensic Engine.")
-    else:
-        st.success("Gmail is connected for this session.")
-        if st.button("Disconnect Gmail", use_container_width=True):
-            st.session_state.pop("gmail_access_token", None)
-            st.session_state.pop("gmail_token_expires_at", None)
-            st.session_state["gmail_messages"] = []
-            st.rerun()
+    st.success("Gmail is connected for this session.")
+    if st.button("Disconnect Gmail", use_container_width=True):
+        st.session_state.pop("gmail_access_token", None)
+        st.session_state.pop("gmail_token_expires_at", None)
+        st.session_state["gmail_messages"] = []
+        st.session_state["email_completed"] = False
+        st.session_state["email_report"] = ""
+        st.rerun()
 
-        if st.button("📨 Find emails in selected date range", use_container_width=True):
-            try:
-                with st.spinner("Searching your Gmail messages..."):
-                    st.session_state["gmail_messages"] = list_gmail_messages(start_date, end_date)
-                if not st.session_state["gmail_messages"]:
-                    st.info("No Gmail messages were found in the selected date range.")
-            except Exception as error:
-                st.error("Could not retrieve Gmail messages. The connection may have expired or the Gmail API may not be enabled.")
-                st.caption(str(error))
+    if st.button("📨 Find ALL emails in selected date range", use_container_width=True):
+        try:
+            with st.spinner("Searching all Gmail pages for the selected dates..."):
+                st.session_state["gmail_messages"] = list_gmail_messages(start_date, end_date)
+                st.session_state["gmail_messages_dates"] = (str(start_date), str(end_date))
+            st.session_state["email_completed"] = False
+            st.session_state["email_report"] = ""
+            if not st.session_state["gmail_messages"]:
+                st.info("No Gmail messages were found in the selected date range.")
+        except Exception as error:
+            st.error("Could not retrieve Gmail messages. The connection may have expired or the Gmail API may not be enabled.")
+            st.caption(str(error))
 
-        messages = st.session_state.get("gmail_messages", [])
-        if messages:
-            labels = [item["label"] for item in messages]
-            selected_label = st.selectbox("Select an email to analyze", labels, key="gmail_message_select")
-            selected_message = next(item for item in messages if item["label"] == selected_label)
-
-            if st.button("📧 Analyze Selected Gmail Message", type="primary", use_container_width=True):
-                st.session_state.email_completed = False
-                st.session_state.email_report = ""
+    messages = st.session_state.get("gmail_messages", [])
+    if messages:
+        st.info(f"Found {len(messages)} email(s). The analysis button processes every email found for the selected date range.")
+        if st.button("🔎 Analyze ALL emails and generate PDF", type="primary", use_container_width=True):
+            st.session_state.email_completed = False
+            st.session_state.email_report = ""
+            report_sections = []
+            failed_emails = []
+            EMAIL_INPUT_DIR.mkdir(parents=True, exist_ok=True)
+            progress = st.progress(0, text="Preparing email analysis...")
+            for index, message in enumerate(messages, start=1):
                 try:
-                    EMAIL_INPUT_DIR.mkdir(parents=True, exist_ok=True)
-                    raw_email = download_gmail_message_as_eml(selected_message["id"])
+                    raw_email = download_gmail_message_as_eml(message["id"])
                     EMAIL_INPUT_FILE.write_bytes(raw_email)
-                    with st.spinner("Analyzing the selected Gmail message..."):
+                    with st.spinner(f"Analyzing email {index} of {len(messages)}..."):
                         success = run_email_forensics()
                     if success:
-                        st.success("Email forensic analysis completed successfully.")
-                except Exception as error:
-                    st.error("Could not analyze the selected Gmail message.")
-                    st.caption(str(error))
+                        report_sections.append(
+                            f"EMAIL {index} OF {len(messages)}\n"
+                            f"Selected date range: {st.session_state.get('gmail_messages_dates', (str(start_date), str(end_date)))[0]} to "
+                            f"{st.session_state.get('gmail_messages_dates', (str(start_date), str(end_date)))[1]}\n"
+                            f"Selected message: {message.get('label', message['id'])}\n\n"
+                            f"{st.session_state.email_report}"
+                        )
+                    else:
+                        failed_emails.append(message.get("label", message["id"]))
+                except Exception:
+                    failed_emails.append(message.get("label", message["id"]))
+                progress.progress(index / len(messages), text=f"Processed {index} of {len(messages)} emails")
 
-# Optional compatibility path for testing with a saved email file.
-with st.expander("Optional: analyze an existing .eml file instead"):
-    email_upload = st.file_uploader(
-        "Upload Email Evidence (.eml)",
-        type=["eml"],
-        key="email_evidence_upload",
-    )
-    if st.button("Run Forensics on Uploaded .eml", key="run_uploaded_email"):
-        st.session_state.email_completed = False
-        st.session_state.email_report = ""
-        if email_upload is None:
-            st.error("Choose an .eml file first.")
-        elif not EMAIL_MAIN.is_file():
-            st.error("Email analysis script was not found.")
-            st.code(str(EMAIL_MAIN))
-        else:
-            try:
-                EMAIL_INPUT_DIR.mkdir(parents=True, exist_ok=True)
-                EMAIL_INPUT_FILE.write_bytes(email_upload.getvalue())
-                with st.spinner("Analyzing uploaded email evidence..."):
-                    success = run_email_forensics()
-                if success:
-                    st.success("Email forensic analysis completed successfully.")
-            except Exception as error:
-                st.error("Email forensic analysis failed.")
-                st.exception(error)
+            st.session_state.email_report = (
+                "\n\n" + ("=" * 72) + "\n\n"
+            ).join(report_sections)
+            st.session_state.email_processed_count = len(report_sections)
+            st.session_state.email_failed_count = len(failed_emails)
+            st.session_state.email_completed = bool(report_sections)
+            st.session_state.email_report_start_date = start_date
+            st.session_state.email_report_end_date = end_date
+            st.session_state.email_failed_labels = failed_emails
+            if report_sections:
+                st.success(f"Analyzed {len(report_sections)} of {len(messages)} emails.")
+            else:
+                st.error("No email reports were generated. Check the email pipeline output.")
+            if failed_emails:
+                st.warning(f"{len(failed_emails)} email(s) could not be analyzed. They are listed in the PDF.")
 
-
-# ============================================================
-# DISPLAY EMAIL REPORT
-# ============================================================
-
-if st.session_state.email_completed:
-    st.subheader("📄 Email Forensic Report")
-    st.text_area(
-        "Email Forensic Report",
-        st.session_state.email_report,
-        height=400,
-    )
-
+if st.session_state.get("email_completed"):
     try:
         email_pdf_path = APP_DIR / "email_forensic_report.pdf"
+        failed = st.session_state.get("email_failed_labels", [])
+        final_report = st.session_state.email_report
+        if failed:
+            final_report += "\n\nFAILED EMAILS (could not be analyzed)\n" + "\n".join(failed)
         generate_professional_pdf(
-            email_pdf_path, "email",
-            start_date, end_date,
-            email_report=st.session_state.email_report,
+            email_pdf_path,
+            "email",
+            st.session_state.get("email_report_start_date", start_date),
+            st.session_state.get("email_report_end_date", end_date),
+            email_report=final_report,
         )
         st.download_button(
-            "⬇️ Download Professional Email PDF",
+            f"⬇️ Download PDF — {st.session_state.get('email_processed_count', 0)} emails analyzed",
             data=email_pdf_path.read_bytes(),
             file_name="email_forensic_report.pdf",
             mime="application/pdf",
@@ -1643,7 +1649,7 @@ if st.session_state.email_completed:
         )
     except Exception as error:
         st.error("Could not generate the email PDF report.")
-        st.exception(error)
+        st.caption(str(error))
 
 
 # ============================================================
