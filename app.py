@@ -1299,68 +1299,31 @@ if st.session_state.analysis_complete:
         )
 
     st.divider()
-    st.subheader("🔴 Detected Phishing URLs")
+    st.subheader("📄 Browser Forensic Report — Outline")
 
-    phishing_df = df[
-        df["Status"].astype(str).str.upper() == "PHISHING"
-    ]
+    st.markdown(
+        f"""
+        **1. Investigation Details**
+        - Investigation period: {st.session_state.analysis_start_date} to {st.session_state.analysis_end_date}
+        - Evidence source: Browser history JSON/CSV uploaded by the investigator
 
-    if phishing_df.empty:
-        st.success("No URLs were classified as phishing.")
-    else:
-        st.dataframe(
-            phishing_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+        **2. Evidence Overview**
+        - Total URL records analyzed: **{total}**
+        - Phishing classifications: **{phishing}**
+        - Benign classifications: **{benign}**
+        - Suspicious/unknown classifications: **{suspicious}**
 
-    st.divider()
-    st.subheader("🟠 Suspicious URLs")
+        **3. Risk Assessment**
+        - Overall risk level: **{risk}**
 
-    suspicious_df = df[
-        df["Status"].astype(str).str.upper().isin(
-            ["SUSPICIOUS", "UNKNOWN"]
-        )
-    ]
+        **4. Report Contents**
+        - Detailed URL, page title, visit time, classification, risk score, and analysis
+        - Summary of findings and investigation conclusion
 
-    if suspicious_df.empty:
-        st.success("No URLs were classified as suspicious.")
-    else:
-        st.dataframe(
-            suspicious_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    st.divider()
-    st.subheader("📥 Download Browser Results")
-
-    st.download_button(
-        "⬇️ Download Browser Analysis CSV",
-        data=df.to_csv(index=False).encode("utf-8"),
-        file_name="browser_forensic_results.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-    browser_report = create_report(
-        df,
-        st.session_state.analysis_start_date,
-        st.session_state.analysis_end_date,
-        total,
-        phishing,
-        benign,
-        suspicious,
-        risk,
-    )
-
-    st.divider()
-    st.subheader("📄 Browser Forensic Report")
-
-    st.text_area(
-        "Browser Forensic Report",
-        browser_report,
-        height=400,
+        **5. Important Note**
+        - Detailed evidence and analysis are included in the downloadable PDF only.
+        - Automated classifications are indicators for investigation, not final proof of malicious activity.
+        """
     )
 
     try:
@@ -1372,7 +1335,7 @@ if st.session_state.analysis_complete:
             browser_df=df,
         )
         st.download_button(
-            "⬇️ Download Professional Browser PDF",
+            "⬇️ Download Detailed Browser Forensic PDF",
             data=browser_pdf_path.read_bytes(),
             file_name="browser_forensic_report.pdf",
             mime="application/pdf",
