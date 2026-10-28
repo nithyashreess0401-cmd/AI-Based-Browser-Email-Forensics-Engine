@@ -1375,8 +1375,10 @@ def gmail_authorization_url():
     if not client_id or not redirect_uri:
         return None
 
-    oauth_state = secrets.token_urlsafe(24)
-    st.session_state["gmail_oauth_state"] = oauth_state
+    oauth_state = st.session_state.get("gmail_oauth_state")
+    if not oauth_state:
+        oauth_state = secrets.token_urlsafe(24)
+        st.session_state["gmail_oauth_state"] = oauth_state
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
