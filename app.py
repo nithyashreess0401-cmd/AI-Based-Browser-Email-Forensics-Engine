@@ -7,6 +7,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pandas as pd
+import httpx
 import streamlit as st
 
 
@@ -1347,59 +1348,254 @@ if st.session_state.analysis_complete:
 
 
 # ============================================================
+# GMAIL OAUTH HELPERS
+# ============================================================
+
+GMAIL_SCOPES = "https://www.googleapis.com/auth/gmail.readonly"
+
+
+def gmail_oauth_settings():
+    """Read OAuth web-client settings from Streamlit secrets."""
+    try:
+        settings = st.secrets.get("gmail_oauth", {})
+        client_id = settings.get("client_id", "")
+        client_secret = settings.get("client_secret", "")
+        redirect_uri = settings.get("redirect_uri", "")
+        return client_id, client_secret, redirect_uri
+    except Exception:
+        return "", "", ""
+
+
+def gmail_authorization_url():
+    """Build a Google OAuth URL requesting read-only Gmail access."""
+    import secrets
+    from urllib.parse import urlencode
+
+    client_id, _, redirect_uri = gmail_oauth_settings()
+    if not client_id or not redirect_uri:
+        return None
+
+    oauth_state = secrets.token_urlsafe(24)
+    st.session_state["gmail_oauth_state"] = oauth_state
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "openid email profile " + GMAIL_SCOPES,
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+        "prompt": "consent",
+        "state": oauth_state,
+    }
+    return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+
+
+def handle_gmail_oauth_callback():
+    """Exchange Google's authorization code for a short-lived access token."""
+    code = st.query_params.get("code")
+    returned_state = st.query_params.get("state")
+    if not code:
+        return
+
+    expected_state = st.session_state.get("gmail_oauth_state")
+    if not expected_state or returned_state != expected_state:
+        st.error("Gmail authorization state could not be verified. Please connect Gmail again.")
+        st.query_params.clear()
+        return
+
+    client_id, client_secret, redirect_uri = gmail_oauth_settings()
+    if not client_id or not client_secret or not redirect_uri:
+        st.error("Gmail OAuth settings are missing. Configure client_id, client_secret, and redirect_uri in Streamlit Secrets.")
+        st.query_params.clear()
+        return
+
+    try:
+        response = httpx.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+            },
+            timeout=20.0,
+        )
+        response.raise_for_status()
+        token_data = response.json()
+        st.session_state["gmail_access_token"] = token_data["access_token"]
+        st.session_state["gmail_token_expires_at"] = (
+            __import__("time").time() + int(token_data.get("expires_in", 3600))
+        )
+        st.session_state["gmail_oauth_state"] = None
+        st.query_params.clear()
+        st.success("Gmail connected successfully with read-only access.")
+        st.rerun()
+    except Exception:
+        st.error("Google could not complete Gmail authorization. Check the OAuth client and redirect URI, then try again.")
+        st.query_params.clear()
+
+
+def gmail_api_get(path, params=None):
+    """Call the Gmail API using the user's session access token."""
+    token = st.session_state.get("gmail_access_token")
+    expires_at = st.session_state.get("gmail_token_expires_at", 0)
+    if not token or __import__("time").time() >= expires_at:
+        raise RuntimeError("Your Gmail connection expired. Please connect Gmail again.")
+
+    response = httpx.get(
+        "https://gmail.googleapis.com/gmail/v1/users/me/" + path,
+        headers={"Authorization": "Bearer " + token},
+        params=params,
+        timeout=25.0,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def list_gmail_messages(start_date, end_date, max_results=25):
+    """List Gmail messages received during the selected investigation period."""
+    query = (
+        f"after:{start_date.strftime('%Y/%m/%d')} "
+        f"before:{(end_date + timedelta(days=1)).strftime('%Y/%m/%d')}"
+    )
+    listing = gmail_api_get("messages", {"q": query, "maxResults": max_results})
+    messages = listing.get("messages", [])
+    results = []
+
+    for message in messages:
+        metadata = gmail_api_get(
+            "messages/" + message["id"],
+            {"format": "metadata", "metadataHeaders": ["From", "To", "Subject", "Date"]},
+        )
+        headers = {
+            item.get("name", "").lower(): item.get("value", "")
+            for item in metadata.get("payload", {}).get("headers", [])
+        }
+        subject = headers.get("subject") or "(No subject)"
+        sender = headers.get("from") or "(Unknown sender)"
+        received = headers.get("date") or ""
+        results.append({
+            "id": message["id"],
+            "label": f"{subject} — {sender} {('— ' + received) if received else ''}",
+            "subject": subject,
+            "sender": sender,
+            "date": received,
+        })
+    return results
+
+
+def download_gmail_message_as_eml(message_id):
+    """Download the selected message in RFC 822 format for the existing analyzer."""
+    import base64
+
+    message = gmail_api_get("messages/" + message_id, {"format": "raw"})
+    raw = message.get("raw")
+    if not raw:
+        raise RuntimeError("Google returned no raw email content for this message.")
+    return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+
+
+handle_gmail_oauth_callback()
+
+
+# ============================================================
 # EMAIL FORENSICS
 # ============================================================
 
 st.divider()
 st.header("📧 Email Forensics")
-
 st.write(
-    "Upload an email evidence file in .eml format."
+    "Connect your own Gmail account, choose an investigation period, and analyze a message "
+    "using read-only Gmail access. The selected message is passed to the existing email-forensics pipeline."
 )
 
-email_upload = st.file_uploader(
-    "Upload Email Evidence (.eml)",
-    type=["eml"],
-    key="email_evidence_upload",
+client_id, client_secret, redirect_uri = gmail_oauth_settings()
+gmail_connected = bool(
+    st.session_state.get("gmail_access_token")
+    and __import__("time").time() < st.session_state.get("gmail_token_expires_at", 0)
 )
 
-if st.button(
-    "📧 Run Email Forensics",
-    type="primary",
-    use_container_width=True,
-):
-    st.session_state.email_completed = False
-    st.session_state.email_report = ""
-
-    if email_upload is None:
-        st.error("Upload an .eml file before running email forensics.")
-
-    elif not EMAIL_MAIN.is_file():
-        st.error("Email analysis script was not found.")
-        st.code(str(EMAIL_MAIN))
-
+if not client_id or not client_secret or not redirect_uri:
+    st.warning(
+        "Gmail direct access is not configured yet. The app needs a Google OAuth Web client "
+        "and three values in Streamlit Secrets before the Gmail connection button can work."
+    )
+else:
+    if not gmail_connected:
+        authorization_url = gmail_authorization_url()
+        if authorization_url:
+            st.link_button(
+                "🔐 Connect Gmail (read-only)",
+                authorization_url,
+                use_container_width=True,
+            )
+        st.caption("Google will ask you to authorize read-only access to Gmail. This is separate from signing in to Forensic Engine.")
     else:
-        try:
-            EMAIL_INPUT_DIR.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
+        st.success("Gmail is connected for this session.")
+        if st.button("Disconnect Gmail", use_container_width=True):
+            st.session_state.pop("gmail_access_token", None)
+            st.session_state.pop("gmail_token_expires_at", None)
+            st.session_state["gmail_messages"] = []
+            st.rerun()
 
-            EMAIL_INPUT_FILE.write_bytes(
-                email_upload.getvalue()
-            )
+        if st.button("📨 Find emails in selected date range", use_container_width=True):
+            try:
+                with st.spinner("Searching your Gmail messages..."):
+                    st.session_state["gmail_messages"] = list_gmail_messages(start_date, end_date)
+                if not st.session_state["gmail_messages"]:
+                    st.info("No Gmail messages were found in the selected date range.")
+            except Exception as error:
+                st.error("Could not retrieve Gmail messages. The connection may have expired or the Gmail API may not be enabled.")
+                st.caption(str(error))
 
-            with st.spinner("Analyzing email evidence..."):
-                success = run_email_forensics()
+        messages = st.session_state.get("gmail_messages", [])
+        if messages:
+            labels = [item["label"] for item in messages]
+            selected_label = st.selectbox("Select an email to analyze", labels, key="gmail_message_select")
+            selected_message = next(item for item in messages if item["label"] == selected_label)
 
-            if success:
-                st.success(
-                    "✅ Email forensic analysis completed successfully."
-                )
+            if st.button("📧 Analyze Selected Gmail Message", type="primary", use_container_width=True):
+                st.session_state.email_completed = False
+                st.session_state.email_report = ""
+                try:
+                    EMAIL_INPUT_DIR.mkdir(parents=True, exist_ok=True)
+                    raw_email = download_gmail_message_as_eml(selected_message["id"])
+                    EMAIL_INPUT_FILE.write_bytes(raw_email)
+                    with st.spinner("Analyzing the selected Gmail message..."):
+                        success = run_email_forensics()
+                    if success:
+                        st.success("Email forensic analysis completed successfully.")
+                except Exception as error:
+                    st.error("Could not analyze the selected Gmail message.")
+                    st.caption(str(error))
 
-        except Exception as error:
-            st.error("Email forensic analysis failed.")
-            st.exception(error)
+# Optional compatibility path for testing with a saved email file.
+with st.expander("Optional: analyze an existing .eml file instead"):
+    email_upload = st.file_uploader(
+        "Upload Email Evidence (.eml)",
+        type=["eml"],
+        key="email_evidence_upload",
+    )
+    if st.button("Run Forensics on Uploaded .eml", key="run_uploaded_email"):
+        st.session_state.email_completed = False
+        st.session_state.email_report = ""
+        if email_upload is None:
+            st.error("Choose an .eml file first.")
+        elif not EMAIL_MAIN.is_file():
+            st.error("Email analysis script was not found.")
+            st.code(str(EMAIL_MAIN))
+        else:
+            try:
+                EMAIL_INPUT_DIR.mkdir(parents=True, exist_ok=True)
+                EMAIL_INPUT_FILE.write_bytes(email_upload.getvalue())
+                with st.spinner("Analyzing uploaded email evidence..."):
+                    success = run_email_forensics()
+                if success:
+                    st.success("Email forensic analysis completed successfully.")
+            except Exception as error:
+                st.error("Email forensic analysis failed.")
+                st.exception(error)
 
 
 # ============================================================
@@ -1408,7 +1604,6 @@ if st.button(
 
 if st.session_state.email_completed:
     st.subheader("📄 Email Forensic Report")
-
     st.text_area(
         "Email Forensic Report",
         st.session_state.email_report,
@@ -1498,22 +1693,3 @@ if (
         except Exception as error:
             st.error("Could not generate the combined PDF report.")
             st.exception(error)
-
-else:
-    st.info(
-        "Complete both browser and email analysis to generate "
-        "the combined PDF report."
-    )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.divider()
-
-st.caption(
-    "🌐 AI-Based Browser & Email Forensics Engine | "
-    "Browser History Analysis | Phishing URL Detection | "
-    "Email Forensics"
-)
