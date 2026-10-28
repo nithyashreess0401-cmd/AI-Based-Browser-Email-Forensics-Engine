@@ -1021,13 +1021,13 @@ st.divider()
 st.header("🔎 Browser Analysis")
 
 st.write(
-    "Upload an exported browser-history CSV file. "
-    "The CSV should include a URL column and preferably a Visit Time column."
+    "Upload the JSON exported by the Forensic Browser Extension, or a browser-history CSV. "
+    "JSON exports containing url, title, visitTime, and transition are supported."
 )
 
 browser_upload = st.file_uploader(
-    "Upload Browser History CSV",
-    type=["csv"],
+    "Upload Browser History JSON or CSV",
+    type=["json", "csv"],
     key="browser_history_upload",
 )
 
@@ -1042,10 +1042,32 @@ if st.button(
     try:
         if browser_upload is None:
             st.error(
-                "Upload a browser-history CSV before running the analysis."
+                "Upload the browser extension's JSON export or a browser-history CSV before running analysis."
             )
         else:
-            uploaded_df = pd.read_csv(browser_upload)
+            if browser_upload.name.lower().endswith(".json"):
+                import json
+
+                json_data = json.load(browser_upload)
+                if isinstance(json_data, dict):
+                    json_data = json_data.get("records", json_data.get("history", []))
+                if not isinstance(json_data, list):
+                    st.error("The JSON file must contain a list of browser-history records.")
+                    st.stop()
+
+                uploaded_df = pd.DataFrame(json_data)
+                uploaded_df = uploaded_df.rename(
+                    columns={
+                        "url": "URL",
+                        "title": "Title",
+                        "visitTime": "Visit Time",
+                        "visit_time": "Visit Time",
+                        "transition": "Transition",
+                    }
+                )
+            else:
+                uploaded_df = pd.read_csv(browser_upload)
+
             uploaded_df = normalize_columns(uploaded_df)
 
             if "URL" not in uploaded_df.columns:
