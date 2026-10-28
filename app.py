@@ -1586,10 +1586,11 @@ else:
         if st.button("🔎 Analyze ALL emails and generate PDF", type="primary", use_container_width=True):
             st.session_state.email_completed = False
             st.session_state.email_report = ""
-            report_sections = []
+            import re
+            email_summaries = []
             failed_emails = []
             EMAIL_INPUT_DIR.mkdir(parents=True, exist_ok=True)
-            progress = st.progress(0, text="Preparing email analysis...")
+            progress = st.progress(0, text="Preparing consolidated email analysis...")
             for index, message in enumerate(messages, start=1):
                 try:
                     raw_email = download_gmail_message_as_eml(message["id"])
@@ -1597,34 +1598,87 @@ else:
                     with st.spinner(f"Analyzing email {index} of {len(messages)}..."):
                         success = run_email_forensics()
                     if success:
-                        report_sections.append(
-                            f"EMAIL {index} OF {len(messages)}\n"
-                            f"Selected date range: {st.session_state.get('gmail_messages_dates', (str(start_date), str(end_date)))[0]} to "
-                            f"{st.session_state.get('gmail_messages_dates', (str(start_date), str(end_date)))[1]}\n"
-                            f"Selected message: {message.get('label', message['id'])}\n\n"
-                            f"{st.session_state.email_report}"
-                        )
+                        report_text = st.session_state.email_report
+                        def field(pattern, default="Not reported"):
+                            match = re.search(pattern, report_text, re.IGNORECASE | re.MULTILINE)
+                            return match.group(1).strip() if match else default
+
+                        email_summaries.append({
+                            "number": index,
+                            "subject": field(r"^Subject:\s*(.+)$", message.get("subject", "(No subject)")),
+                            "from": field(r"^From:\s*(.+)$", message.get("sender", "(Unknown sender)")),
+                            "date": field(r"^Date:\s*(.+)$", message.get("date", "")),
+                            "risk": field(r"^Email Risk Level:\s*(.+)$", "UNKNOWN").upper(),
+                            "urls": field(r"^Total URLs Found:\s*(\d+)\s*$", "0"),
+                            "suspicious_urls": field(r"^Suspicious URLs:\s*(\d+)\s*$", "0"),
+                            "spf": field(r"^SPF:\s*(.+)$"),
+                            "dkim": field(r"^DKIM:\s*(.+)$"),
+                            "dmarc": field(r"\bdmarc=([a-z]+)", "Not reported").upper(),
+                        })
                     else:
                         failed_emails.append(message.get("label", message["id"]))
                 except Exception:
                     failed_emails.append(message.get("label", message["id"]))
                 progress.progress(index / len(messages), text=f"Processed {index} of {len(messages)} emails")
 
-            st.session_state.email_report = (
-                "\n\n" + ("=" * 72) + "\n\n"
-            ).join(report_sections)
-            st.session_state.email_processed_count = len(report_sections)
+            if email_summaries:
+                high_count = sum(item["risk"] == "HIGH" for item in email_summaries)
+                medium_count = sum(item["risk"] == "MEDIUM" for item in email_summaries)
+                low_count = sum(item["risk"] == "LOW" for item in email_summaries)
+                unknown_count = len(email_summaries) - high_count - medium_count - low_count
+                total_urls = sum(int(item["urls"]) for item in email_summaries if str(item["urls"]).isdigit())
+                suspicious_urls = sum(int(item["suspicious_urls"]) for item in email_summaries if str(item["suspicious_urls"]).isdigit())
+                consolidated = [
+                    "CONSOLIDATED EMAIL FORENSICS FINAL REPORT",
+                    "=" * 64,
+                    f"Investigation period: {start_date} to {end_date}",
+                    f"Emails found: {len(messages)}",
+                    f"Emails successfully analyzed: {len(email_summaries)}",
+                    f"Emails failed: {len(failed_emails)}",
+                    "",
+                    "OVERALL SUMMARY",
+                    "-" * 64,
+                    f"Email risk counts: HIGH={high_count}, MEDIUM={medium_count}, LOW={low_count}, UNKNOWN={unknown_count}",
+                    f"Total URLs found across emails: {total_urls}",
+                    f"Suspicious URLs across emails: {suspicious_urls}",
+                    "",
+                    "EMAIL FINDINGS (SUMMARY ONLY)",
+                    "-" * 64,
+                ]
+                for item in email_summaries:
+                    consolidated.extend([
+                        f"Email {item['number']}: {item['subject']}",
+                        f"From: {item['from']}",
+                        f"Date: {item['date']}",
+                        f"Risk: {item['risk']} | URLs: {item['urls']} | Suspicious URLs: {item['suspicious_urls']}",
+                        f"Authentication: SPF={item['spf']} | DKIM={item['dkim']} | DMARC={item['dmarc']}",
+                        "-" * 64,
+                    ])
+                if failed_emails:
+                    consolidated.extend(["", "EMAILS THAT FAILED ANALYSIS", "-" * 64])
+                    consolidated.extend(failed_emails)
+                consolidated.extend([
+                    "",
+                    "CONCLUSION",
+                    "-" * 64,
+                    "This report consolidates findings from all successfully analyzed emails in the selected date range.",
+                    "Automated risk classifications are investigative indicators and should not be treated as conclusive proof.",
+                ])
+                st.session_state.email_report = "\n".join(consolidated)
+            else:
+                st.session_state.email_report = ""
+            st.session_state.email_processed_count = len(email_summaries)
             st.session_state.email_failed_count = len(failed_emails)
-            st.session_state.email_completed = bool(report_sections)
+            st.session_state.email_completed = bool(email_summaries)
             st.session_state.email_report_start_date = start_date
             st.session_state.email_report_end_date = end_date
             st.session_state.email_failed_labels = failed_emails
-            if report_sections:
-                st.success(f"Analyzed {len(report_sections)} of {len(messages)} emails.")
+            if email_summaries:
+                st.success(f"Created one consolidated report from {len(email_summaries)} analyzed emails.")
             else:
                 st.error("No email reports were generated. Check the email pipeline output.")
             if failed_emails:
-                st.warning(f"{len(failed_emails)} email(s) could not be analyzed. They are listed in the PDF.")
+                st.warning(f"{len(failed_emails)} email(s) could not be analyzed; their names are listed in the consolidated PDF.")
 
 if st.session_state.get("email_completed"):
     try:
