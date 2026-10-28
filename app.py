@@ -1366,19 +1366,30 @@ def gmail_oauth_settings():
         return "", "", ""
 
 
+def _gmail_state_signature(nonce, client_secret):
+    """Sign OAuth state so validation survives Streamlit session reruns."""
+    import hashlib
+    import hmac
+
+    return hmac.new(
+        client_secret.encode("utf-8"),
+        nonce.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def gmail_authorization_url():
-    """Build a Google OAuth URL requesting read-only Gmail access."""
+    """Build a Gmail OAuth URL with state that can be validated after redirect."""
     import secrets
     from urllib.parse import urlencode
 
-    client_id, _, redirect_uri = gmail_oauth_settings()
-    if not client_id or not redirect_uri:
+    client_id, client_secret, redirect_uri = gmail_oauth_settings()
+    if not client_id or not client_secret or not redirect_uri:
         return None
 
-    oauth_state = st.session_state.get("gmail_oauth_state")
-    if not oauth_state:
-        oauth_state = secrets.token_urlsafe(24)
-        st.session_state["gmail_oauth_state"] = oauth_state
+    nonce = secrets.token_urlsafe(24)
+    signature = _gmail_state_signature(nonce, client_secret)
+    oauth_state = nonce + "." + signature
     params = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
@@ -1394,15 +1405,11 @@ def gmail_authorization_url():
 
 def handle_gmail_oauth_callback():
     """Exchange Google's authorization code for a short-lived access token."""
+    import hmac
+
     code = st.query_params.get("code")
     returned_state = st.query_params.get("state")
     if not code:
-        return
-
-    expected_state = st.session_state.get("gmail_oauth_state")
-    if not expected_state or returned_state != expected_state:
-        st.error("Gmail authorization state could not be verified. Please connect Gmail again.")
-        st.query_params.clear()
         return
 
     client_id, client_secret, redirect_uri = gmail_oauth_settings()
@@ -1412,6 +1419,15 @@ def handle_gmail_oauth_callback():
         return
 
     try:
+        if not returned_state or "." not in returned_state:
+            raise ValueError("Missing OAuth state")
+        nonce, supplied_signature = returned_state.rsplit(".", 1)
+        expected_signature = _gmail_state_signature(nonce, client_secret)
+        if not hmac.compare_digest(supplied_signature, expected_signature):
+            st.error("Gmail authorization state could not be verified. Please connect Gmail again.")
+            st.query_params.clear()
+            return
+
         response = httpx.post(
             "https://oauth2.googleapis.com/token",
             data={
@@ -1429,7 +1445,6 @@ def handle_gmail_oauth_callback():
         st.session_state["gmail_token_expires_at"] = (
             __import__("time").time() + int(token_data.get("expires_in", 3600))
         )
-        st.session_state["gmail_oauth_state"] = None
         st.query_params.clear()
         st.success("Gmail connected successfully with read-only access.")
         st.rerun()
