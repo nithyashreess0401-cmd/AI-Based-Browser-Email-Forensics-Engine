@@ -1,19 +1,15 @@
-
 {
   "manifest_version": 3,
   "name": "Forensic Engine Browser Connector",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Retrieves Chrome browsing history for authorized forensic analysis.",
-  "permissions": [
-    "history",
-    "downloads"
-  ],
+  "permissions": ["history"],
   "host_permissions": [
-    "https://ai-based-browser-email-forensics-engine-fudazumawynmgunkx3xxqd.streamlit.app/*"
+    "https://ai-based-browser-email-forensics-engine-iwjzszyuqcqmshb5wrej5f.streamlit.app/*"
   ],
   "externally_connectable": {
     "matches": [
-      "https://ai-based-browser-email-forensics-engine-fudazumawynmgunkx3xxqd.streamlit.app/*"
+      "https://ai-based-browser-email-forensics-engine-iwjzszyuqcqmshb5wrej5f.streamlit.app/*"
     ]
   },
   "background": {
