@@ -1016,12 +1016,38 @@ st.divider()
 st.header("🔎 Browser Analysis")
 
 st.write(
-    "Upload the JSON exported by the Forensic Browser Extension, or a browser-history CSV. "
-    "JSON exports containing url, title, visitTime, and transition are supported."
+    "Automatic mode: create a short-lived session here, paste its token into the Chrome extension, "
+    "retrieve history, then run analysis. Manual JSON/CSV upload remains available as a fallback."
 )
 
+connector_url = st.secrets.get("FORENSIC_API_URL", "https://forensic-engine-connector.onrender.com").rstrip("/")
+connector_key = st.secrets.get("FORENSIC_CONNECTOR_KEY", "")
+if "forensic_session_token" not in st.session_state:
+    st.session_state.forensic_session_token = ""
+
+if st.button("🔑 Create Chrome Connector Session", use_container_width=True):
+    try:
+        if not connector_key:
+            st.error("FORENSIC_CONNECTOR_KEY is missing from Streamlit Secrets.")
+        else:
+            response = httpx.post(
+                connector_url + "/v1/sessions",
+                json={"start_date": str(start_date), "end_date": str(end_date)},
+                headers={"X-Connector-Key": connector_key},
+                timeout=20,
+            )
+            response.raise_for_status()
+            st.session_state.forensic_session_token = response.json()["token"]
+            st.success("Session created. Copy the token into the Forensic Engine Chrome extension. It expires shortly.")
+    except Exception as exc:
+        st.error(f"Could not create connector session: {exc}")
+
+if st.session_state.forensic_session_token:
+    st.code(st.session_state.forensic_session_token, language=None)
+    st.caption("Open the extension, enter the same start/end dates and paste this token. After it sends history, click Run Browser Analysis below.")
+
 browser_upload = st.file_uploader(
-    "Upload Browser History JSON or CSV",
+    "Optional fallback: upload Browser History JSON or CSV",
     type=["json", "csv"],
     key="browser_history_upload",
 )
@@ -1035,33 +1061,44 @@ if st.button(
     st.session_state.browser_results = None
 
     try:
-        if browser_upload is None:
-            st.error(
-                "Upload the browser extension's JSON export or a browser-history CSV before running analysis."
-            )
-        else:
+        uploaded_df = None
+        if browser_upload is not None:
             if browser_upload.name.lower().endswith(".json"):
                 import json
-
                 json_data = json.load(browser_upload)
                 if isinstance(json_data, dict):
                     json_data = json_data.get("records", json_data.get("history", []))
                 if not isinstance(json_data, list):
                     st.error("The JSON file must contain a list of browser-history records.")
                     st.stop()
-
-                uploaded_df = pd.DataFrame(json_data)
-                uploaded_df = uploaded_df.rename(
-                    columns={
-                        "url": "URL",
-                        "title": "Title",
-                        "visitTime": "Visit Time",
-                        "visit_time": "Visit Time",
-                        "transition": "Transition",
-                    }
-                )
+                uploaded_df = pd.DataFrame(json_data).rename(columns={
+                    "url": "URL", "title": "Title", "visitTime": "Visit Time",
+                    "visit_time": "Visit Time", "transition": "Transition",
+                })
             else:
                 uploaded_df = pd.read_csv(browser_upload)
+        elif st.session_state.forensic_session_token and connector_key:
+            try:
+                response = httpx.get(
+                    connector_url + "/v1/evidence/" + st.session_state.forensic_session_token,
+                    headers={"X-Connector-Key": connector_key},
+                    timeout=20,
+                )
+                response.raise_for_status()
+                payload = response.json()
+                uploaded_df = pd.DataFrame(payload.get("records", []))
+                st.success(f"Received {payload.get('count', len(uploaded_df))} records from Chrome.")
+            except httpx.HTTPStatusError as exc:
+                detail = exc.response.text
+                if exc.response.status_code == 404:
+                    st.error("No evidence received yet or session expired. Create a session, send history from the extension, then click Run Browser Analysis.")
+                else:
+                    st.error(f"Connector error: {detail}")
+            except Exception as exc:
+                st.error(f"Could not retrieve browser evidence: {exc}")
+        else:
+            st.error("Create a connector session above and send history from the Chrome extension, or upload a JSON/CSV file.")
+        if uploaded_df is not None:
 
             uploaded_df = normalize_columns(uploaded_df)
 
