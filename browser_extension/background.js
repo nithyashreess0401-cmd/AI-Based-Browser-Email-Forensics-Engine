@@ -1,5 +1,5 @@
 const APP_ORIGIN =
-  "https://ai-based-browser-email-forensics-engine-iwjzszyuqcqmshb5wrej5f.streamlit.app";
+  "https://ai-based-browser-email-forensics-engine-fudazumawynmgunkx3xxqd.streamlit.app";
 
 function getHistory(startDate, endDate) {
   return new Promise((resolve, reject) => {
