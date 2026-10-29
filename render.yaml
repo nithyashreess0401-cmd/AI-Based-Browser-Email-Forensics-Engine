@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: forensic-engine-connector
+    runtime: python
+    plan: free
+    branch: new-branch
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn connector_api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: FORENSIC_CONNECTOR_KEY
+        sync: false
+      - key: EVIDENCE_TTL_SECONDS
+        value: "900"
